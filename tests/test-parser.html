@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DMARC Parser Tests</title>
+  <style>
+    body { font-family: monospace; padding: 20px; }
+    .pass { color: green; }
+    .fail { color: red; }
+    pre { background: #f5f5f5; padding: 10px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>DMARC Parser Tests</h1>
+  <div id="results"></div>
+
+  <script src="../lib/pako.min.js"></script>
+  <script src="../lib/jszip.min.js"></script>
+  <script src="../src/parser/file-handler.js"></script>
+  <script src="../src/parser/dmarc-parser.js"></script>
+
+  <script>
+    const results = document.getElementById('results');
+
+    function log(message, isPass = true) {
+      const div = document.createElement('div');
+      div.className = isPass ? 'pass' : 'fail';
+      div.textContent = (isPass ? '✓ ' : '✗ ') + message;
+      results.appendChild(div);
+    }
+
+    function logJson(obj) {
+      const pre = document.createElement('pre');
+      pre.textContent = JSON.stringify(obj, null, 2);
+      results.appendChild(pre);
+    }
+
+    async function runTests() {
+      log('Starting tests...');
+
+      // Test 1: XML parsing directly
+      try {
+        const sampleXml = `<?xml version="1.0"?>
+          <feedback>
+            <version>1.0</version>
+            <report_metadata>
+              <org_name>Test Org</org_name>
+              <email>test@example.com</email>
+              <report_id>12345</report_id>
+              <date_range>
+                <begin>1768521600</begin>
+                <end>1768608000</end>
+              </date_range>
+            </report_metadata>
+            <policy_published>
+              <domain>example.com</domain>
+              <adkim>r</adkim>
+              <aspf>r</aspf>
+              <p>quarantine</p>
+              <sp>quarantine</sp>
+              <pct>100</pct>
+            </policy_published>
+            <record>
+              <row>
+                <source_ip>192.0.2.1</source_ip>
+                <count>5</count>
+                <policy_evaluated>
+                  <disposition>none</disposition>
+                  <dkim>pass</dkim>
+                  <spf>pass</spf>
+                </policy_evaluated>
+              </row>
+              <identifiers>
+                <header_from>example.com</header_from>
+              </identifiers>
+              <auth_results>
+                <dkim>
+                  <domain>example.com</domain>
+                  <selector>selector1</selector>
+                  <result>pass</result>
+                </dkim>
+                <spf>
+                  <domain>example.com</domain>
+                  <result>pass</result>
+                </spf>
+              </auth_results>
+            </record>
+          </feedback>`;
+
+        const report = parseDmarcReport(sampleXml);
+        log('XML parsing: parsed successfully');
+
+        if (report.metadata.orgName === 'Test Org') {
+          log('XML parsing: metadata.orgName correct');
+        } else {
+          log('XML parsing: metadata.orgName incorrect', false);
+        }
+
+        if (report.policy.domain === 'example.com') {
+          log('XML parsing: policy.domain correct');
+        } else {
+          log('XML parsing: policy.domain incorrect', false);
+        }
+
+        if (report.records.length === 1) {
+          log('XML parsing: records count correct');
+        } else {
+          log('XML parsing: records count incorrect', false);
+        }
+
+        if (report.summary.totalMessages === 5) {
+          log('XML parsing: summary.totalMessages correct');
+        } else {
+          log('XML parsing: summary.totalMessages incorrect', false);
+        }
+
+        logJson(report);
+      } catch (err) {
+        log('XML parsing failed: ' + err.message, false);
+      }
+
+      // Test 2: Format detection
+      try {
+        const gzipBytes = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]);
+        const format = detectFormat(gzipBytes);
+        if (format === 'gzip') {
+          log('Format detection: GZIP detected correctly');
+        } else {
+          log('Format detection: GZIP not detected', false);
+        }
+      } catch (err) {
+        log('Format detection failed: ' + err.message, false);
+      }
+
+      try {
+        const zipBytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04]);
+        const format = detectFormat(zipBytes);
+        if (format === 'zip') {
+          log('Format detection: ZIP detected correctly');
+        } else {
+          log('Format detection: ZIP not detected', false);
+        }
+      } catch (err) {
+        log('Format detection failed: ' + err.message, false);
+      }
+
+      try {
+        const xmlBytes = new TextEncoder().encode('<?xml version="1.0"?>');
+        const format = detectFormat(xmlBytes);
+        if (format === 'xml') {
+          log('Format detection: XML detected correctly');
+        } else {
+          log('Format detection: XML not detected', false);
+        }
+      } catch (err) {
+        log('Format detection failed: ' + err.message, false);
+      }
+
+      log('Tests complete. Drop actual DMARC files below to test full pipeline.');
+    }
+
+    // File drop zone for manual testing
+    document.body.addEventListener('dragover', (e) => e.preventDefault());
+    document.body.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+
+      log(`Processing dropped file: ${file.name}`);
+
+      try {
+        const buffer = await file.arrayBuffer();
+        const xml = await extractXmlFromFile(buffer, file.name);
+        log('File extraction successful');
+
+        const report = parseDmarcReport(xml);
+        log('Parsing successful');
+        log(`Organization: ${report.metadata.orgName}`);
+        log(`Domain: ${report.policy.domain}`);
+        log(`Records: ${report.records.length}`);
+        log(`Total messages: ${report.summary.totalMessages}`);
+        logJson(report);
+      } catch (err) {
+        log('Processing failed: ' + err.message, false);
+      }
+    });
+
+    runTests();
+  </script>
+</body>
+</html>
