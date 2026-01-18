@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "DMARC Report Reader",
+  "version": "1.0.0",
+  "description": "Read and visualize DMARC aggregate reports from XML, ZIP, or GZIP files",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    },
+    "default_title": "DMARC Report Reader"
+  },
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://outlook.live.com/*",
+    "https://outlook.office.com/*",
+    "http://ip-api.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["src/content/gmail.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://outlook.live.com/*", "https://outlook.office.com/*"],
+      "js": ["src/content/outlook.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/viewer/viewer.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

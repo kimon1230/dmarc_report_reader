@@ -1,0 +1,84 @@
+digraph DMARCReportReader {
+    rankdir=TB;
+    node [shape=box, style=filled, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Title
+    labelloc="t";
+    label="DMARC Report Reader - Architecture";
+    fontsize=16;
+    fontname="Helvetica-Bold";
+
+    // Subgraphs for organization
+    subgraph cluster_input {
+        label="Input Sources";
+        style=filled;
+        fillcolor="#e8f4f8";
+        node [fillcolor="#a8d5e5"];
+
+        file_drop [label="File Drop/Pick\n(popup.js)"];
+        gmail [label="Gmail\n(gmail.js)"];
+        outlook [label="Outlook Web\n(outlook.js)"];
+    }
+
+    subgraph cluster_processing {
+        label="Processing Layer";
+        style=filled;
+        fillcolor="#f0f8e8";
+        node [fillcolor="#c5e1a5"];
+
+        service_worker [label="Service Worker\n(service-worker.js)"];
+        file_handler [label="File Handler\n(file-handler.js)\nFormat Detection"];
+        dmarc_parser [label="DMARC Parser\n(dmarc-parser.js)\nXML → JSON"];
+    }
+
+    subgraph cluster_libraries {
+        label="External Libraries";
+        style=filled;
+        fillcolor="#fff8e1";
+        node [fillcolor="#ffe082"];
+
+        jszip [label="JSZip\n(ZIP extraction)"];
+        pako [label="pako\n(GZIP decompression)"];
+    }
+
+    subgraph cluster_services {
+        label="Services";
+        style=filled;
+        fillcolor="#fce4ec";
+        node [fillcolor="#f8bbd9"];
+
+        ip_lookup [label="IP Lookup\n(ip-lookup.js)"];
+        ip_api [label="ip-api.com\n(External API)"];
+    }
+
+    subgraph cluster_output {
+        label="Output";
+        style=filled;
+        fillcolor="#e8eaf6";
+        node [fillcolor="#c5cae9"];
+
+        viewer [label="Report Viewer\n(viewer.html/js/css)"];
+    }
+
+    // Edges
+    file_drop -> service_worker [label="ArrayBuffer"];
+    gmail -> service_worker [label="Attachment data"];
+    outlook -> service_worker [label="Attachment data"];
+
+    service_worker -> file_handler [label="Raw bytes"];
+
+    file_handler -> jszip [label="ZIP files", style=dashed];
+    file_handler -> pako [label="GZ files", style=dashed];
+    file_handler -> dmarc_parser [label="XML string"];
+
+    jszip -> dmarc_parser [label="Extracted XML"];
+    pako -> dmarc_parser [label="Decompressed XML"];
+
+    dmarc_parser -> viewer [label="Parsed report\n(JSON)"];
+
+    viewer -> ip_lookup [label="Source IPs"];
+    ip_lookup -> ip_api [label="HTTP request", style=dashed];
+    ip_api -> ip_lookup [label="Geo data", style=dashed];
+    ip_lookup -> viewer [label="IP metadata"];
+}

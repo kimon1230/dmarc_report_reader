@@ -1,0 +1,38 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python (for icon generation scripts)
+__pycache__/
+*.py[cod]
+*.so
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Browser Extension
+*.crx
+*.pem
+*.zip
+
+# Test DMARC files (sample data)
+*.xml
+*.xml.gz
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
