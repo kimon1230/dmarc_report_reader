@@ -10,10 +10,16 @@
   <div class="container">
     <header class="header">
       <h1>DMARC Report Viewer</h1>
-      <div id="drop-zone" class="drop-zone-inline">
-        <span>Drop file here or</span>
-        <button id="file-picker-btn" class="btn-secondary">Select File</button>
-        <input type="file" id="file-input" accept=".xml,.gz,.zip" hidden>
+      <div class="header-actions">
+        <div id="drop-zone" class="drop-zone-inline">
+          <span>Drop file or</span>
+          <button id="file-picker-btn" class="btn-secondary">Select File</button>
+          <input type="file" id="file-input" accept=".xml,.gz,.zip" hidden>
+        </div>
+        <div id="export-buttons" class="export-buttons hidden">
+          <button id="export-json" class="btn-export">Export JSON</button>
+          <button id="export-csv" class="btn-export">Export CSV</button>
+        </div>
       </div>
     </header>
 
@@ -25,89 +31,151 @@
     <div id="error" class="error hidden"></div>
 
     <main id="report" class="report hidden">
-      <!-- Summary Cards -->
-      <section class="summary-cards">
-        <div class="card card-total">
-          <div class="card-value" id="total-messages">0</div>
-          <div class="card-label">Total Messages</div>
+      <!-- Summary Cards with Progress Bars -->
+      <section class="summary-section">
+        <div class="summary-cards">
+          <div class="card card-total">
+            <div class="card-value" id="total-messages">0</div>
+            <div class="card-label">Total Messages</div>
+          </div>
+          <div class="card card-pass">
+            <div class="card-value" id="passed-both">0</div>
+            <div class="card-label">Fully Compliant</div>
+            <div class="progress-bar">
+              <div class="progress-fill pass" id="progress-both"></div>
+            </div>
+            <div class="card-percent" id="percent-both">0%</div>
+          </div>
+          <div class="card card-dkim">
+            <div class="card-value" id="passed-dkim">0</div>
+            <div class="card-label">DKIM Pass</div>
+            <div class="progress-bar">
+              <div class="progress-fill dkim" id="progress-dkim"></div>
+            </div>
+            <div class="card-percent" id="percent-dkim">0%</div>
+          </div>
+          <div class="card card-spf">
+            <div class="card-value" id="passed-spf">0</div>
+            <div class="card-label">SPF Pass</div>
+            <div class="progress-bar">
+              <div class="progress-fill spf" id="progress-spf"></div>
+            </div>
+            <div class="card-percent" id="percent-spf">0%</div>
+          </div>
         </div>
-        <div class="card card-pass">
-          <div class="card-value" id="passed-both">0</div>
-          <div class="card-label">Passed (DKIM & SPF)</div>
-        </div>
-        <div class="card card-dkim">
-          <div class="card-value" id="passed-dkim">0</div>
-          <div class="card-label">Passed DKIM</div>
-        </div>
-        <div class="card card-spf">
-          <div class="card-value" id="passed-spf">0</div>
-          <div class="card-label">Passed SPF</div>
+        <div class="summary-cards failure-cards">
+          <div class="card card-fail">
+            <div class="card-value" id="failed-both">0</div>
+            <div class="card-label">Failed Both</div>
+          </div>
+          <div class="card card-quarantine">
+            <div class="card-value" id="quarantined">0</div>
+            <div class="card-label">Quarantined</div>
+          </div>
+          <div class="card card-reject">
+            <div class="card-value" id="rejected">0</div>
+            <div class="card-label">Rejected</div>
+          </div>
         </div>
       </section>
 
       <!-- Report Metadata -->
-      <section class="section">
-        <h2>Report Information</h2>
-        <div class="metadata-grid">
-          <div class="metadata-item">
-            <span class="metadata-label">Reporting Organization</span>
-            <span class="metadata-value" id="org-name">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">Report ID</span>
-            <span class="metadata-value" id="report-id">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">Date Range</span>
-            <span class="metadata-value" id="date-range">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">Contact</span>
-            <span class="metadata-value" id="contact-email">-</span>
+      <section class="section collapsible">
+        <h2 class="section-header">
+          <span>Report Information</span>
+          <button class="collapse-btn" aria-label="Toggle section">▼</button>
+        </h2>
+        <div class="section-content">
+          <div class="metadata-grid">
+            <div class="metadata-item">
+              <span class="metadata-label">Reporting Organization</span>
+              <span class="metadata-value" id="org-name">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">Report ID</span>
+              <span class="metadata-value" id="report-id">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">Date Range</span>
+              <span class="metadata-value" id="date-range">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">Contact</span>
+              <span class="metadata-value" id="contact-email">-</span>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- Policy Published -->
-      <section class="section">
-        <h2>Published Policy</h2>
-        <div class="metadata-grid">
-          <div class="metadata-item">
-            <span class="metadata-label">Domain</span>
-            <span class="metadata-value" id="policy-domain">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">Policy</span>
-            <span class="metadata-value" id="policy-p">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">Subdomain Policy</span>
-            <span class="metadata-value" id="policy-sp">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">DKIM Alignment</span>
-            <span class="metadata-value" id="policy-adkim">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">SPF Alignment</span>
-            <span class="metadata-value" id="policy-aspf">-</span>
-          </div>
-          <div class="metadata-item">
-            <span class="metadata-label">Percentage</span>
-            <span class="metadata-value" id="policy-pct">-</span>
+      <section class="section collapsible">
+        <h2 class="section-header">
+          <span>Published Policy</span>
+          <button class="collapse-btn" aria-label="Toggle section">▼</button>
+        </h2>
+        <div class="section-content">
+          <div class="metadata-grid">
+            <div class="metadata-item">
+              <span class="metadata-label">Domain</span>
+              <span class="metadata-value" id="policy-domain">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">Policy</span>
+              <span class="metadata-value" id="policy-p">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">Subdomain Policy</span>
+              <span class="metadata-value" id="policy-sp">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">DKIM Alignment</span>
+              <span class="metadata-value" id="policy-adkim">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">SPF Alignment</span>
+              <span class="metadata-value" id="policy-aspf">-</span>
+            </div>
+            <div class="metadata-item">
+              <span class="metadata-label">Percentage</span>
+              <span class="metadata-value" id="policy-pct">-</span>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- Records Table -->
       <section class="section">
-        <h2>Authentication Records</h2>
+        <div class="section-header-with-controls">
+          <h2>Authentication Records</h2>
+          <div class="table-controls">
+            <div class="filter-group">
+              <label>Filter:</label>
+              <select id="filter-status">
+                <option value="all">All Records</option>
+                <option value="pass">Passed Only</option>
+                <option value="fail">Failed Only</option>
+                <option value="quarantine">Quarantined</option>
+                <option value="reject">Rejected</option>
+              </select>
+            </div>
+            <div class="sort-group">
+              <label>Sort by:</label>
+              <select id="sort-by">
+                <option value="count-desc">Count (High to Low)</option>
+                <option value="count-asc">Count (Low to High)</option>
+                <option value="ip">IP Address</option>
+              </select>
+            </div>
+          </div>
+        </div>
         <div class="table-container">
           <table class="records-table">
             <thead>
               <tr>
                 <th>Source IP</th>
+                <th>Hostname</th>
                 <th>Location</th>
+                <th>From Domain</th>
                 <th>Count</th>
                 <th>Disposition</th>
                 <th>DKIM</th>
@@ -119,6 +187,7 @@
             </tbody>
           </table>
         </div>
+        <div id="records-summary" class="records-summary"></div>
       </section>
     </main>
 
