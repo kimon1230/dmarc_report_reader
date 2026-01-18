@@ -1,6 +1,6 @@
 /**
  * DMARC Report Reader - IP Lookup Service
- * Fetches geolocation data for IP addresses using ip-api.com
+ * Fetches geolocation and reverse DNS data for IP addresses using ip-api.com
  */
 
 /**
@@ -28,13 +28,14 @@ function countryCodeToFlag(countryCode) {
  * @returns {Promise<Object>} Geolocation data
  */
 async function lookupIp(ip) {
-  // Check cache first
   if (ipCache.has(ip)) {
     return ipCache.get(ip);
   }
 
   try {
-    const response = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,countryCode,city,isp,org,as`);
+    const response = await fetch(
+      `http://ip-api.com/json/${ip}?fields=status,country,countryCode,city,isp,org,as,reverse`
+    );
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -56,7 +57,8 @@ async function lookupIp(ip) {
       city: data.city,
       isp: data.isp,
       org: data.org,
-      asn: data.as
+      asn: data.as,
+      hostname: data.reverse || null
     };
 
     ipCache.set(ip, result);
@@ -81,7 +83,6 @@ async function lookupIps(ips, onProgress) {
   const results = new Map();
   const uncachedIps = uniqueIps.filter(ip => !ipCache.has(ip));
 
-  // Return cached results for already-looked-up IPs
   for (const ip of uniqueIps) {
     if (ipCache.has(ip)) {
       results.set(ip, ipCache.get(ip));
@@ -92,17 +93,19 @@ async function lookupIps(ips, onProgress) {
     return results;
   }
 
-  // Use batch endpoint for efficiency (up to 100 IPs per request)
   const batchSize = 100;
   for (let i = 0; i < uncachedIps.length; i += batchSize) {
     const batch = uncachedIps.slice(i, i + batchSize);
 
     try {
-      const response = await fetch('http://ip-api.com/batch?fields=status,query,country,countryCode,city,isp,org,as', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch)
-      });
+      const response = await fetch(
+        'http://ip-api.com/batch?fields=status,query,country,countryCode,city,isp,org,as,reverse',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(batch)
+        }
+      );
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -125,7 +128,8 @@ async function lookupIps(ips, onProgress) {
             city: item.city,
             isp: item.isp,
             org: item.org,
-            asn: item.as
+            asn: item.as,
+            hostname: item.reverse || null
           };
         }
 
@@ -138,7 +142,6 @@ async function lookupIps(ips, onProgress) {
       }
     } catch (err) {
       console.error('Batch IP lookup failed:', err);
-      // Fall back to marking all as errors
       for (const ip of batch) {
         const result = { error: true, ip, message: err.message };
         ipCache.set(ip, result);
@@ -146,7 +149,6 @@ async function lookupIps(ips, onProgress) {
       }
     }
 
-    // Rate limiting: wait 1.5 seconds between batches to stay under 45 req/min
     if (i + batchSize < uncachedIps.length) {
       await new Promise(resolve => setTimeout(resolve, 1500));
     }
@@ -190,7 +192,19 @@ function formatIsp(geo) {
   return geo.isp || geo.org || 'Unknown';
 }
 
+/**
+ * Format hostname from IP lookup result
+ * @param {Object} geo - Geolocation data
+ * @returns {string} Hostname or empty string
+ */
+function formatHostname(geo) {
+  if (!geo || geo.error || !geo.hostname) {
+    return '';
+  }
+  return geo.hostname;
+}
+
 // Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { lookupIp, lookupIps, formatLocation, formatIsp };
+  module.exports = { lookupIp, lookupIps, formatLocation, formatIsp, formatHostname };
 }

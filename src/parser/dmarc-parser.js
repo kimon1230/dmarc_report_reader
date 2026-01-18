@@ -87,6 +87,27 @@ function parsePolicy(policyEl) {
 }
 
 /**
+ * Parse policy override reasons
+ * @param {Element} policyEvalEl - policy_evaluated element
+ * @returns {Array} Array of reason objects
+ */
+function parseReasons(policyEvalEl) {
+  if (!policyEvalEl) return [];
+
+  const reasons = [];
+  const reasonEls = policyEvalEl.getElementsByTagName('reason');
+
+  for (const reasonEl of reasonEls) {
+    reasons.push({
+      type: getText(reasonEl, 'type'),
+      comment: getText(reasonEl, 'comment')
+    });
+  }
+
+  return reasons;
+}
+
+/**
  * Parse auth_results section
  * @param {Element} authEl - auth_results element
  * @returns {Object} Parsed auth results
@@ -137,24 +158,47 @@ function parseIdentifiers(idEl) {
 }
 
 /**
+ * Check if there's an alignment mismatch
+ * @param {Object} identifiers - Parsed identifiers
+ * @param {Object} policy - Parsed policy
+ * @returns {Object} Alignment status
+ */
+function checkAlignment(identifiers, policy) {
+  if (!identifiers) return { headerEnvelopeMismatch: false };
+
+  const headerFrom = identifiers.headerFrom?.toLowerCase();
+  const envelopeFrom = identifiers.envelopeFrom?.toLowerCase();
+
+  return {
+    headerEnvelopeMismatch: headerFrom && envelopeFrom && headerFrom !== envelopeFrom
+  };
+}
+
+/**
  * Parse a single record element
  * @param {Element} recordEl - record element
+ * @param {Object} policy - Parsed policy for alignment checks
  * @returns {Object} Parsed record
  */
-function parseRecord(recordEl) {
+function parseRecord(recordEl, policy) {
   const rowEl = recordEl.getElementsByTagName('row')[0];
   const policyEvalEl = rowEl ? rowEl.getElementsByTagName('policy_evaluated')[0] : null;
+  const identifiers = parseIdentifiers(recordEl.getElementsByTagName('identifiers')[0]);
+
+  const policyEvaluated = policyEvalEl ? {
+    disposition: getText(policyEvalEl, 'disposition'),
+    dkim: getText(policyEvalEl, 'dkim'),
+    spf: getText(policyEvalEl, 'spf'),
+    reasons: parseReasons(policyEvalEl)
+  } : null;
 
   return {
     sourceIp: rowEl ? getText(rowEl, 'source_ip') : null,
     count: rowEl ? getInt(rowEl, 'count') : 0,
-    policyEvaluated: policyEvalEl ? {
-      disposition: getText(policyEvalEl, 'disposition'),
-      dkim: getText(policyEvalEl, 'dkim'),
-      spf: getText(policyEvalEl, 'spf')
-    } : null,
-    identifiers: parseIdentifiers(recordEl.getElementsByTagName('identifiers')[0]),
-    authResults: parseAuthResults(recordEl.getElementsByTagName('auth_results')[0])
+    policyEvaluated,
+    identifiers,
+    authResults: parseAuthResults(recordEl.getElementsByTagName('auth_results')[0]),
+    alignment: checkAlignment(identifiers, policy)
   };
 }
 
@@ -186,23 +230,39 @@ function parseDmarcReport(xmlString) {
   const recordEls = feedback.getElementsByTagName('record');
   const records = [];
   for (const recordEl of recordEls) {
-    records.push(parseRecord(recordEl));
+    records.push(parseRecord(recordEl, policy));
   }
 
   // Calculate summary statistics
   let totalMessages = 0;
   let passedDkim = 0;
+  let failedDkim = 0;
   let passedSpf = 0;
+  let failedSpf = 0;
   let passedBoth = 0;
+  let failedBoth = 0;
+  let quarantined = 0;
+  let rejected = 0;
 
   for (const record of records) {
-    totalMessages += record.count;
+    const count = record.count;
+    totalMessages += count;
+
     const dkimPass = record.policyEvaluated?.dkim === 'pass';
     const spfPass = record.policyEvaluated?.spf === 'pass';
+    const disposition = record.policyEvaluated?.disposition;
 
-    if (dkimPass) passedDkim += record.count;
-    if (spfPass) passedSpf += record.count;
-    if (dkimPass && spfPass) passedBoth += record.count;
+    if (dkimPass) passedDkim += count;
+    else failedDkim += count;
+
+    if (spfPass) passedSpf += count;
+    else failedSpf += count;
+
+    if (dkimPass && spfPass) passedBoth += count;
+    if (!dkimPass && !spfPass) failedBoth += count;
+
+    if (disposition === 'quarantine') quarantined += count;
+    if (disposition === 'reject') rejected += count;
   }
 
   return {
@@ -213,9 +273,17 @@ function parseDmarcReport(xmlString) {
     summary: {
       totalMessages,
       passedDkim,
+      failedDkim,
       passedSpf,
+      failedSpf,
       passedBoth,
-      failedBoth: totalMessages - passedDkim - passedSpf + passedBoth
+      failedBoth,
+      quarantined,
+      rejected,
+      // Percentages
+      dkimPassRate: totalMessages > 0 ? (passedDkim / totalMessages * 100) : 0,
+      spfPassRate: totalMessages > 0 ? (passedSpf / totalMessages * 100) : 0,
+      overallPassRate: totalMessages > 0 ? (passedBoth / totalMessages * 100) : 0
     }
   };
 }
