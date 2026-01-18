@@ -50,14 +50,12 @@ async function handleFile(file) {
 
   showStatus('Processing file...', 'loading');
 
-  // Send file to background script for processing
-  // Full implementation in Phase 4
   try {
     const reader = new FileReader();
     reader.onload = async (e) => {
       const data = e.target.result;
 
-      // Send to background script
+      // Send to background script for processing
       chrome.runtime.sendMessage({
         action: 'processFile',
         fileName: file.name,
@@ -69,7 +67,13 @@ async function handleFile(file) {
         }
 
         if (response && response.success) {
-          showStatus('Report loaded successfully!', 'success');
+          showStatus('Opening viewer...', 'success');
+
+          // Request background to open viewer tab
+          chrome.runtime.sendMessage({ action: 'openViewer' }, () => {
+            // Close popup after opening viewer
+            window.close();
+          });
         } else {
           showStatus(response?.error || 'Failed to process file', 'error');
         }

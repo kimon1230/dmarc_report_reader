@@ -354,11 +354,18 @@ document.body.addEventListener('drop', (e) => {
   }
 });
 
-// Check for report passed via chrome.storage (from popup)
+// Check for XML passed via chrome.storage (from popup)
 if (typeof chrome !== 'undefined' && chrome.storage) {
-  chrome.storage.local.get(['currentReport'], (result) => {
-    if (result.currentReport) {
-      displayReport(result.currentReport);
+  chrome.storage.local.get(['currentXml'], (result) => {
+    if (result.currentXml) {
+      try {
+        const report = parseDmarcReport(result.currentXml);
+        displayReport(report);
+        // Clear storage after loading
+        chrome.storage.local.remove(['currentXml']);
+      } catch (err) {
+        showError(`Failed to parse report: ${err.message}`);
+      }
     }
   });
 }

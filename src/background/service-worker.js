@@ -1,60 +1,61 @@
 /**
  * DMARC Report Reader - Service Worker
- * Handles background tasks, file processing, and message passing
+ * Handles background tasks, file extraction, and message passing
+ * Note: DOMParser is not available in service workers, so XML parsing
+ * is done in the viewer context instead.
  */
 
-// Import libraries and parser modules
+// Import libraries for file extraction only
 importScripts(
   '../../lib/pako.min.js',
   '../../lib/jszip.min.js',
-  '../parser/file-handler.js',
-  '../parser/dmarc-parser.js'
+  '../parser/file-handler.js'
 );
 
 /**
- * Process a DMARC report file
+ * Extract XML from a DMARC report file
  * @param {number[]} dataArray - File data as byte array
  * @param {string} fileName - Original filename
- * @returns {Promise<Object>} Parsed DMARC report
+ * @returns {Promise<string>} Extracted XML string
  */
-async function processFile(dataArray, fileName) {
+async function extractFile(dataArray, fileName) {
   const data = new Uint8Array(dataArray);
-
   // Extract XML from file (handles ZIP, GZIP, or plain XML)
-  const xmlString = await extractXmlFromFile(data, fileName);
-
-  // Parse DMARC report
-  const report = parseDmarcReport(xmlString);
-
-  return report;
+  return await extractXmlFromFile(data, fileName);
 }
 
 // Listen for messages from popup and content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'processFile') {
-    processFile(message.data, message.fileName)
-      .then(report => {
-        // Store the report for the viewer
-        chrome.storage.local.set({ currentReport: report }, () => {
-          sendResponse({ success: true, report });
+    extractFile(message.data, message.fileName)
+      .then(xmlString => {
+        // Store the raw XML for the viewer to parse
+        chrome.storage.local.set({ currentXml: xmlString }, () => {
+          sendResponse({ success: true });
         });
       })
       .catch(err => {
-        console.error('File processing error:', err);
+        console.error('File extraction error:', err);
         sendResponse({ success: false, error: err.message });
       });
 
-    // Return true to indicate async response
     return true;
   }
 
-  if (message.action === 'getReport') {
-    chrome.storage.local.get(['currentReport'], (result) => {
-      sendResponse({ success: true, report: result.currentReport });
+  if (message.action === 'getXml') {
+    chrome.storage.local.get(['currentXml'], (result) => {
+      sendResponse({ success: true, xml: result.currentXml });
+    });
+    return true;
+  }
+
+  if (message.action === 'openViewer') {
+    const viewerUrl = chrome.runtime.getURL('src/viewer/viewer.html');
+    chrome.tabs.create({ url: viewerUrl }, () => {
+      sendResponse({ success: true });
     });
     return true;
   }
 });
 
-// Log when service worker starts
 console.log('DMARC Report Reader service worker initialized');
