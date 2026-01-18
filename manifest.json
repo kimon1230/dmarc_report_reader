@@ -40,5 +40,11 @@
       "js": ["src/content/outlook.js"],
       "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/viewer/viewer.html"],
+      "matches": ["<all_urls>"]
+    }
   ]
 }

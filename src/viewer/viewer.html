@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DMARC Report Viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>DMARC Report Viewer</h1>
+      <div id="drop-zone" class="drop-zone-inline">
+        <span>Drop file here or</span>
+        <button id="file-picker-btn" class="btn-secondary">Select File</button>
+        <input type="file" id="file-input" accept=".xml,.gz,.zip" hidden>
+      </div>
+    </header>
+
+    <div id="loading" class="loading hidden">
+      <div class="spinner"></div>
+      <span>Processing report...</span>
+    </div>
+
+    <div id="error" class="error hidden"></div>
+
+    <main id="report" class="report hidden">
+      <!-- Summary Cards -->
+      <section class="summary-cards">
+        <div class="card card-total">
+          <div class="card-value" id="total-messages">0</div>
+          <div class="card-label">Total Messages</div>
+        </div>
+        <div class="card card-pass">
+          <div class="card-value" id="passed-both">0</div>
+          <div class="card-label">Passed (DKIM & SPF)</div>
+        </div>
+        <div class="card card-dkim">
+          <div class="card-value" id="passed-dkim">0</div>
+          <div class="card-label">Passed DKIM</div>
+        </div>
+        <div class="card card-spf">
+          <div class="card-value" id="passed-spf">0</div>
+          <div class="card-label">Passed SPF</div>
+        </div>
+      </section>
+
+      <!-- Report Metadata -->
+      <section class="section">
+        <h2>Report Information</h2>
+        <div class="metadata-grid">
+          <div class="metadata-item">
+            <span class="metadata-label">Reporting Organization</span>
+            <span class="metadata-value" id="org-name">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Report ID</span>
+            <span class="metadata-value" id="report-id">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Date Range</span>
+            <span class="metadata-value" id="date-range">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Contact</span>
+            <span class="metadata-value" id="contact-email">-</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Policy Published -->
+      <section class="section">
+        <h2>Published Policy</h2>
+        <div class="metadata-grid">
+          <div class="metadata-item">
+            <span class="metadata-label">Domain</span>
+            <span class="metadata-value" id="policy-domain">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Policy</span>
+            <span class="metadata-value" id="policy-p">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Subdomain Policy</span>
+            <span class="metadata-value" id="policy-sp">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">DKIM Alignment</span>
+            <span class="metadata-value" id="policy-adkim">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">SPF Alignment</span>
+            <span class="metadata-value" id="policy-aspf">-</span>
+          </div>
+          <div class="metadata-item">
+            <span class="metadata-label">Percentage</span>
+            <span class="metadata-value" id="policy-pct">-</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Records Table -->
+      <section class="section">
+        <h2>Authentication Records</h2>
+        <div class="table-container">
+          <table class="records-table">
+            <thead>
+              <tr>
+                <th>Source IP</th>
+                <th>Location</th>
+                <th>Count</th>
+                <th>Disposition</th>
+                <th>DKIM</th>
+                <th>SPF</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="records-body">
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DMARC Report Reader</p>
+    </footer>
+  </div>
+
+  <script src="../../lib/pako.min.js"></script>
+  <script src="../../lib/jszip.min.js"></script>
+  <script src="../parser/file-handler.js"></script>
+  <script src="../parser/dmarc-parser.js"></script>
+  <script src="../services/ip-lookup.js"></script>
+  <script src="viewer.js"></script>
+</body>
+</html>
