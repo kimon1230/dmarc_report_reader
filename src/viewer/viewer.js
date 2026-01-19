@@ -22,6 +22,7 @@ let currentReport = null;
 let ipGeoData = new Map();
 let currentFilter = 'all';
 let currentSort = 'count-desc';
+let pendingDownloadId = null; // Track if file came from download for cleanup
 
 /**
  * Show loading state
@@ -803,6 +804,15 @@ function initCollapsibleSections() {
  * @param {File} file - File object
  */
 async function processFile(file) {
+  // Remove any waiting banners
+  const waitingBanner = document.getElementById('waiting-banner');
+  if (waitingBanner) {
+    const intervalId = waitingBanner.dataset.pollInterval;
+    if (intervalId) clearInterval(parseInt(intervalId));
+    waitingBanner.remove();
+    document.body.style.paddingTop = '';
+  }
+
   showLoading();
 
   try {
@@ -810,6 +820,9 @@ async function processFile(file) {
     const xml = await extractXmlFromFile(buffer, file.name);
     const report = parseDmarcReport(xml);
     displayReport(report);
+
+    // Clean up downloaded file if this came from webmail
+    cleanupDownloadedFile();
   } catch (err) {
     showError(`Failed to process file: ${err.message}`);
   }
@@ -884,18 +897,295 @@ sortSelect.addEventListener('change', (e) => {
 // Initialize collapsible sections
 initCollapsibleSections();
 
-// Check for XML passed via chrome.storage (from popup)
-if (typeof chrome !== 'undefined' && chrome.storage) {
-  chrome.storage.local.get(['currentXml'], (result) => {
-    if (result.currentXml) {
-      try {
-        const report = parseDmarcReport(result.currentXml);
-        displayReport(report);
-        // Clear storage after loading
-        chrome.storage.local.remove(['currentXml']);
-      } catch (err) {
-        showError(`Failed to parse report: ${err.message}`);
-      }
+/**
+ * Show download notification banner with clear instructions
+ * @param {Object} downloadInfo - Info about the pending download
+ */
+function showDownloadNotification(downloadInfo) {
+  // Store download ID for cleanup after processing
+  pendingDownloadId = downloadInfo.id;
+
+  const banner = document.createElement('div');
+  banner.id = 'download-notification';
+  banner.className = 'download-notification';
+
+  // Create the banner content
+  banner.innerHTML = `
+    <div class="download-notification-content">
+      <div class="download-notification-main">
+        <div class="download-notification-title">
+          DMARC Report Downloaded
+        </div>
+        <div class="download-notification-filename">
+          ${downloadInfo.filename}
+        </div>
+        <div class="download-notification-instructions">
+          Click the button below to select the downloaded file from your Downloads folder
+        </div>
+      </div>
+      <button class="download-notification-btn" id="select-download-btn">
+        Select Downloaded File
+      </button>
+      <button class="download-notification-close" title="Dismiss">&times;</button>
+    </div>
+  `;
+
+  // Apply styles
+  banner.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, #1a73e8 0%, #1557b0 100%);
+    color: white;
+    padding: 16px 24px;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  `;
+
+  const content = banner.querySelector('.download-notification-content');
+  content.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+  `;
+
+  const main = banner.querySelector('.download-notification-main');
+  main.style.cssText = 'flex: 1;';
+
+  const title = banner.querySelector('.download-notification-title');
+  title.style.cssText = 'font-size: 16px; font-weight: 600; margin-bottom: 4px;';
+
+  const filename = banner.querySelector('.download-notification-filename');
+  filename.style.cssText = `
+    font-family: monospace;
+    background: rgba(255,255,255,0.2);
+    padding: 4px 8px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-bottom: 4px;
+    font-size: 13px;
+  `;
+
+  const instructions = banner.querySelector('.download-notification-instructions');
+  instructions.style.cssText = 'font-size: 13px; opacity: 0.9;';
+
+  const selectBtn = banner.querySelector('#select-download-btn');
+  selectBtn.style.cssText = `
+    background: white;
+    color: #1a73e8;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform 0.1s, box-shadow 0.1s;
+  `;
+  selectBtn.onmouseenter = () => {
+    selectBtn.style.transform = 'scale(1.02)';
+    selectBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)';
+  };
+  selectBtn.onmouseleave = () => {
+    selectBtn.style.transform = 'scale(1)';
+    selectBtn.style.boxShadow = 'none';
+  };
+  selectBtn.onclick = () => fileInput.click();
+
+  const closeBtn = banner.querySelector('.download-notification-close');
+  closeBtn.style.cssText = `
+    background: none;
+    border: none;
+    color: white;
+    font-size: 28px;
+    cursor: pointer;
+    padding: 0 8px;
+    opacity: 0.8;
+    line-height: 1;
+  `;
+  closeBtn.onmouseenter = () => closeBtn.style.opacity = '1';
+  closeBtn.onmouseleave = () => closeBtn.style.opacity = '0.8';
+  closeBtn.onclick = () => {
+    banner.remove();
+    document.body.style.paddingTop = '';
+  };
+
+  document.body.prepend(banner);
+
+  // Add padding to body to prevent overlap
+  document.body.style.paddingTop = '100px';
+
+  // Try to auto-open file picker (may be blocked by browser)
+  setTimeout(() => {
+    try {
+      fileInput.click();
+    } catch (e) {
+      console.log('DMARC Viewer: Auto file picker blocked, user can click button');
     }
-  });
+  }, 300);
 }
+
+/**
+ * Clean up the downloaded file after successful processing
+ */
+function cleanupDownloadedFile() {
+  if (!pendingDownloadId) return;
+
+  if (typeof chrome !== 'undefined' && chrome.runtime) {
+    chrome.runtime.sendMessage({
+      action: 'cleanupDownload',
+      downloadId: pendingDownloadId
+    });
+    console.log('DMARC Viewer: Requested cleanup of download', pendingDownloadId);
+  }
+
+  pendingDownloadId = null;
+
+  // Remove notification banner
+  const banner = document.getElementById('download-notification');
+  if (banner) {
+    banner.remove();
+    document.body.style.paddingTop = '';
+  }
+}
+
+/**
+ * Show waiting banner and poll for XML data
+ */
+function showWaitingForDownload(filename) {
+  const banner = document.createElement('div');
+  banner.id = 'waiting-banner';
+  banner.innerHTML = `
+    <div class="waiting-content">
+      <div class="waiting-spinner"></div>
+      <div class="waiting-main">
+        <div class="waiting-title">Waiting for download...</div>
+        <div class="waiting-filename">${filename}</div>
+        <div class="waiting-hint">If the download doesn't start, click the download icon in Gmail</div>
+      </div>
+      <button class="waiting-manual" id="manual-select-btn">Select File Manually</button>
+    </div>
+  `;
+
+  banner.style.cssText = `
+    position: fixed; top: 0; left: 0; right: 0;
+    background: linear-gradient(135deg, #1a73e8, #1557b0);
+    color: white; padding: 20px 24px; z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  `;
+
+  const content = banner.querySelector('.waiting-content');
+  content.style.cssText = 'display:flex;align-items:center;gap:20px;max-width:1200px;margin:0 auto;';
+
+  const spinner = banner.querySelector('.waiting-spinner');
+  spinner.style.cssText = `
+    width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.3);
+    border-top-color: white; border-radius: 50%;
+    animation: spin 1s linear infinite;
+  `;
+
+  // Add spinner animation
+  if (!document.getElementById('spinner-style')) {
+    const style = document.createElement('style');
+    style.id = 'spinner-style';
+    style.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+    document.head.appendChild(style);
+  }
+
+  const main = banner.querySelector('.waiting-main');
+  main.style.cssText = 'flex:1;';
+
+  const title = banner.querySelector('.waiting-title');
+  title.style.cssText = 'font-size:16px;font-weight:600;margin-bottom:4px;';
+
+  const fn = banner.querySelector('.waiting-filename');
+  fn.style.cssText = 'font-family:monospace;background:rgba(255,255,255,0.2);padding:4px 8px;border-radius:4px;display:inline-block;margin-bottom:4px;font-size:13px;';
+
+  const hint = banner.querySelector('.waiting-hint');
+  hint.style.cssText = 'font-size:12px;opacity:0.8;';
+
+  const btn = banner.querySelector('#manual-select-btn');
+  btn.style.cssText = 'background:rgba(255,255,255,0.2);color:white;border:1px solid rgba(255,255,255,0.5);padding:10px 20px;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap;';
+  btn.onclick = () => fileInput.click();
+
+  document.body.prepend(banner);
+  document.body.style.paddingTop = '90px';
+
+  // Poll for download complete or XML data
+  let pollCount = 0;
+  const maxPolls = 120; // Poll for up to 60 seconds
+
+  const pollInterval = setInterval(() => {
+    pollCount++;
+
+    chrome.storage.local.get(['currentXml', 'downloadComplete'], (result) => {
+      if (result.currentXml) {
+        // XML is ready - display it
+        clearInterval(pollInterval);
+        banner.remove();
+        document.body.style.paddingTop = '';
+
+        try {
+          const report = parseDmarcReport(result.currentXml);
+          displayReport(report);
+          chrome.storage.local.remove(['currentXml', 'downloadComplete']);
+        } catch (err) {
+          showError(`Failed to parse report: ${err.message}`);
+        }
+      } else if (result.downloadComplete) {
+        // Download finished - prompt user to select file
+        clearInterval(pollInterval);
+        chrome.storage.local.remove(['downloadComplete']);
+
+        spinner.style.display = 'none';
+        title.textContent = 'Download complete!';
+        title.style.color = '#90EE90';
+        hint.textContent = 'Click the button to select the downloaded file';
+
+        btn.textContent = 'Select Downloaded File';
+        btn.style.background = 'white';
+        btn.style.color = '#1a73e8';
+        btn.style.fontWeight = '600';
+        btn.style.border = 'none';
+
+        // Auto-click file picker
+        setTimeout(() => fileInput.click(), 300);
+      } else if (pollCount >= maxPolls) {
+        clearInterval(pollInterval);
+        spinner.style.display = 'none';
+        title.textContent = 'Download the attachment from Gmail';
+        hint.textContent = 'Then click "Select File Manually" to open the report';
+      }
+    });
+  }, 500);
+
+  // Store interval ID for cleanup
+  banner.dataset.pollInterval = pollInterval;
+}
+
+/**
+ * Initialize viewer - check for stored XML data
+ */
+function initViewer() {
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    chrome.storage.local.get(['currentXml'], (result) => {
+      if (result.currentXml) {
+        console.log('DMARC Viewer: Found XML in storage, displaying');
+        try {
+          const report = parseDmarcReport(result.currentXml);
+          displayReport(report);
+          chrome.storage.local.remove(['currentXml']);
+        } catch (err) {
+          showError(`Failed to parse report: ${err.message}`);
+        }
+      }
+      // Otherwise just show the default drop zone - no action needed
+    });
+  }
+}
+
+// Initialize on load
+initViewer();

@@ -2,7 +2,7 @@
 
 ## Overview
 
-DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processes DMARC aggregate reports in XML format (plain, GZIP-compressed, or ZIP-archived) and presents them in a human-readable format.
+DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processes DMARC aggregate reports in XML format (plain, GZIP-compressed, or ZIP-archived) and presents them in a human-readable format with error diagnosis and recommendations.
 
 ## Architecture Diagram
 
@@ -15,8 +15,9 @@ DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processe
 | Component | File | Description |
 |-----------|------|-------------|
 | Popup | `src/popup/popup.js` | Handles drag-drop and file picker input |
-| Gmail Content Script | `src/content/gmail.js` | Detects DMARC attachments in Gmail |
-| Outlook Content Script | `src/content/outlook.js` | Detects DMARC attachments in Outlook Web |
+| Gmail Content Script | `src/content/gmail.js` | Detects DMARC attachments in Gmail, injects viewer button |
+| Outlook Content Script | `src/content/outlook.js` | Detects DMARC attachments in Outlook Web, injects viewer button |
+| Viewer Drop Zone | `src/viewer/viewer.js` | Accepts drag-drop directly in viewer |
 
 ### Processing Layer
 
@@ -24,7 +25,7 @@ DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processe
 |-----------|------|-------------|
 | Service Worker | `src/background/service-worker.js` | Central message hub, orchestrates processing |
 | File Handler | `src/parser/file-handler.js` | Detects file format, extracts XML content |
-| DMARC Parser | `src/parser/dmarc-parser.js` | Parses DMARC XML into structured JSON |
+| DMARC Parser | `src/parser/dmarc-parser.js` | Parses DMARC XML into structured JSON with statistics |
 
 ### External Libraries
 
@@ -37,15 +38,15 @@ DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processe
 
 | Service | File | Description |
 |---------|------|-------------|
-| IP Lookup | `src/services/ip-lookup.js` | Fetches geolocation data for source IPs |
+| IP Lookup | `src/services/ip-lookup.js` | Fetches geolocation and reverse DNS for source IPs |
 
-**External API**: ip-api.com (free tier, 45 requests/minute)
+**External API**: ip-api.com (free tier, 45 requests/minute, batch endpoint for efficiency)
 
 ### Output Layer
 
 | Component | Files | Description |
 |-----------|-------|-------------|
-| Report Viewer | `src/viewer/viewer.html`, `viewer.js`, `viewer.css` | Full-page report display |
+| Report Viewer | `src/viewer/viewer.html`, `viewer.js`, `viewer.css` | Full-page report display with filtering, sorting, export |
 
 ## Data Flow
 
@@ -71,17 +72,17 @@ Input File (XML/ZIP/GZ)
     │        │
     ▼        ▼
    ┌──────────────┐
-   │ DMARC Parser │ ─── XML → Structured JSON
+   │ DMARC Parser │ ─── XML → Structured JSON + Statistics
    └──────────────┘
          │
          ▼
    ┌─────────────┐
-   │ IP Lookup   │ ─── Enrich with geolocation
+   │ IP Lookup   │ ─── Enrich with geolocation & hostname
    └─────────────┘
          │
          ▼
    ┌─────────────┐
-   │ Viewer      │ ─── Render report
+   │ Viewer      │ ─── Render, filter, diagnose, export
    └─────────────┘
 ```
 
@@ -90,11 +91,105 @@ Input File (XML/ZIP/GZ)
 The extension uses Chrome's messaging API for communication:
 
 ```
-Content Script ──sendMessage──▶ Service Worker ──sendMessage──▶ Popup/Viewer
-                                      │
-                                      ▼
-                               File Processing
+Content Script ──processAttachment──▶ Service Worker
+       │                                    │
+       │                                    ▼
+       │                             File Extraction
+       │                                    │
+       │                                    ▼
+       │                             chrome.storage.local
+       │                                    │
+       └──────────────────────────────────▶ Viewer Tab
 ```
+
+### Webmail Integration Flow
+
+The extension uses the Chrome Downloads API for seamless webmail integration, as direct attachment access is blocked by webmail security policies.
+
+```
+Gmail/Outlook Page Load
+         │
+         ▼
+   MutationObserver watches DOM
+         │
+         ▼
+   TreeWalker scans for DMARC filenames
+         │
+         ▼
+   Inject "View DMARC Report" button
+         │
+         ▼
+   On click: Notify service worker → Trigger native download
+         │
+         ▼
+   Service Worker monitors chrome.downloads.onChanged
+         │
+         ▼
+   Download completes → Auto-open viewer with ?fromDownload=true
+         │
+         ▼
+   Viewer shows notification, auto-opens file picker
+         │
+         ▼
+   User selects downloaded file → Report displayed
+         │
+         ▼
+   Cleanup: Downloaded file removed after processing
+```
+
+**Key Design Decisions:**
+
+1. **Download-based approach**: Gmail/Outlook block direct attachment fetch from content scripts. The extension triggers the native download button and monitors for completion.
+
+2. **Automatic viewer launch**: When a DMARC file download completes, the viewer opens automatically with the filename shown.
+
+3. **File cleanup**: Downloaded files are removed from disk and download history after successful processing (or after 5-minute timeout as fallback).
+
+4. **Duplicate prevention**: WeakSet tracks processed DOM elements to prevent multiple button injections.
+
+## Viewer Features
+
+### Summary Statistics
+
+The parser calculates:
+- Total message count
+- DKIM/SPF pass/fail counts
+- Quarantine/reject counts
+- Pass rate percentages
+
+### Filtering & Sorting
+
+| Filter | Description |
+|--------|-------------|
+| All | Show all records |
+| Pass | Both DKIM and SPF passed |
+| Fail | Either DKIM or SPF failed |
+| Quarantine | Disposition = quarantine |
+| Reject | Disposition = reject |
+
+| Sort | Description |
+|------|-------------|
+| Count (High-Low) | Most messages first |
+| Count (Low-High) | Fewest messages first |
+| IP Address | Alphabetical by IP |
+
+### Error Diagnosis
+
+The viewer provides contextual diagnosis for:
+
+| Issue Type | Examples |
+|------------|----------|
+| DKIM Failures | Invalid signature, no signature, DNS errors |
+| SPF Failures | Unauthorized IP, soft fail, no record, lookup limit |
+| Alignment | Header/envelope From mismatch, domain not aligned |
+| Disposition | Explains impact of quarantine/reject |
+
+### Export Formats
+
+| Format | Contents |
+|--------|----------|
+| JSON | Full structured report with all fields |
+| CSV | Flat table with key fields for spreadsheet analysis |
 
 ## DMARC Report Structure
 
@@ -127,10 +222,24 @@ Content Script ──sendMessage──▶ Service Worker ──sendMessage──
         <disposition>none</disposition>
         <dkim>pass</dkim>
         <spf>pass</spf>
+        <reason>...</reason>
       </policy_evaluated>
     </row>
-    <identifiers>...</identifiers>
-    <auth_results>...</auth_results>
+    <identifiers>
+      <header_from>example.com</header_from>
+      <envelope_from>bounce.example.com</envelope_from>
+    </identifiers>
+    <auth_results>
+      <dkim>
+        <domain>example.com</domain>
+        <selector>selector1</selector>
+        <result>pass</result>
+      </dkim>
+      <spf>
+        <domain>example.com</domain>
+        <result>pass</result>
+      </spf>
+    </auth_results>
   </record>
 </feedback>
 ```
@@ -157,20 +266,40 @@ Content Script ──sendMessage──▶ Service Worker ──sendMessage──
     {
       sourceIp: "192.0.2.1",
       count: 10,
-      disposition: "none",
-      dkim: "pass",
-      spf: "pass",
-      identifiers: {...},
-      authResults: {...},
-      // Enriched by IP lookup:
-      geo: {
-        country: "US",
-        city: "Mountain View",
-        isp: "Google LLC",
-        asn: "AS15169"
+      policyEvaluated: {
+        disposition: "none",
+        dkim: "pass",
+        spf: "pass",
+        reasons: []
+      },
+      identifiers: {
+        headerFrom: "example.com",
+        envelopeFrom: "bounce.example.com",
+        envelopeTo: "gmail.com"
+      },
+      authResults: {
+        dkim: [{ domain, selector, result }],
+        spf: [{ domain, scope, result }]
+      },
+      alignment: {
+        headerEnvelopeMismatch: false
       }
     }
-  ]
+  ],
+  summary: {
+    totalMessages: 10,
+    passedDkim: 10,
+    failedDkim: 0,
+    passedSpf: 10,
+    failedSpf: 0,
+    passedBoth: 10,
+    failedBoth: 0,
+    quarantined: 0,
+    rejected: 0,
+    dkimPassRate: 100,
+    spfPassRate: 100,
+    overallPassRate: 100
+  }
 }
 ```
 
@@ -180,6 +309,8 @@ Content Script ──sendMessage──▶ Service Worker ──sendMessage──
 2. **Local Processing**: All file parsing happens client-side
 3. **Minimal Permissions**: Only requests necessary host permissions
 4. **External API**: Only IP addresses are sent to ip-api.com (no email content)
+5. **No Data Storage**: Reports are processed in memory only, not persisted
+6. **Sandboxed Context**: Content scripts run in isolated worlds
 
 ## Browser Compatibility
 
