@@ -4,15 +4,19 @@ A Chrome/Edge browser extension that reads and visualizes DMARC (Domain-based Me
 
 ## Features
 
-- **Multiple Input Formats**: Supports plain XML, GZIP (.xml.gz), and ZIP archives
+- **Multiple Input Formats**: Supports plain XML, GZIP (.xml.gz), and ZIP archives (including multi-report ZIPs)
+- **Multi-Report ZIP Support**: Automatically detects ZIPs with multiple DMARC reports and offers report selection or combination
 - **Drag and Drop**: Simply drop a DMARC report file onto the viewer
 - **IP Geolocation**: Shows country, city, hostname (reverse DNS), ISP, and ASN for source IPs
 - **Webmail Integration**: Detects DMARC attachments in Gmail and Outlook Web
 - **Clear Visualization**: Color-coded pass/fail indicators with row highlighting
-- **Filtering & Sorting**: Filter by status (pass/fail/quarantine/reject) and sort by count or IP
-- **Export**: Export reports as JSON or CSV for further analysis
+- **Advanced Filtering**: Filter by status, domain, IP/CIDR, country, hostname, and message count
+- **Top-N Analysis**: See top sending IPs, failing domains, countries, and networks at a glance
+- **Raw XML Viewer**: View and copy the original XML source with syntax highlighting
+- **Export**: Export reports as JSON or CSV (respects active filters)
 - **Error Diagnosis**: Contextual explanations and recommendations for authentication failures
-- **Collapsible Sections**: Clean UI with collapsible metadata sections
+- **On-Demand Enrichment**: For large reports, IP enrichment is optional to save time
+- **Session Caching**: IP lookup results persist within browser session
 
 ## Supported File Types
 
@@ -105,10 +109,29 @@ Click "Show" on any record to see:
 - **Alignment Warnings**: If domains don't match for DMARC alignment
 - **Issues & Recommendations**: Contextual diagnosis with actionable fixes
 
+### Advanced Filtering
+
+Click "Filters" to expand the filter panel:
+- **Status**: Pass/Fail/Quarantine/Reject
+- **Domain**: Search by From domain (substring match)
+- **Source IP**: Filter by IP prefix or CIDR notation (e.g., `192.168.1.0/24`)
+- **Country**: Dropdown of countries found in the report
+- **Hostname**: Search by reverse DNS hostname
+- **Min Messages**: Show only records with at least N messages
+
+### Top-N Analysis Section
+
+The Analysis section shows:
+- **Top Sending IPs**: Highest volume senders with location info
+- **Top Failing Domains**: Domains with the most authentication failures
+- **Top Countries**: Geographic distribution of senders
+- **Top Networks (ASN)**: ISPs and cloud providers sending the most mail
+
 ### Export Options
 
-- **Export JSON**: Full structured data including all parsed fields
-- **Export CSV**: Spreadsheet-compatible format with key fields
+- **View XML**: View original XML source with syntax highlighting (Copy button available)
+- **Export JSON**: Full structured data including analysis summaries (respects filters)
+- **Export CSV**: Spreadsheet-compatible format with all key fields (respects filters)
 
 ## DMARC Error Diagnosis
 
@@ -138,12 +161,16 @@ See [DEVELOPER.md](docs/DEVELOPER.md) for setup instructions and contribution gu
 
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical documentation.
 
-## Privacy
+## Privacy & Security
 
 - All file processing happens locally in your browser
-- IP geolocation uses ip-api.com (free tier, no API key required)
+- IP geolocation uses ip-api.com over HTTPS (free tier, no API key required)
 - No DMARC report data is stored or transmitted to external servers
-- IP lookup results are cached in memory for the session only
+- IP lookup results are cached in browser session storage (cleared when browser closes)
+- No tracking, no analytics, no data collection
+- All user-controlled data is sanitized before display (XSS protection)
+- Service worker validates message origins and payloads
+- Manifest V3 enforces strict Content Security Policy
 
 ## License
 

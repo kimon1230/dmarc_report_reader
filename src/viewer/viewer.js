@@ -3,6 +3,9 @@
  * Displays parsed DMARC reports with IP geolocation
  */
 
+// Storage key constant (must match service-worker.js)
+const STORAGE_KEY_REPORT_DATA = 'dmarcReportData';
+
 // DOM Elements
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
@@ -17,12 +20,62 @@ const exportCsvBtn = document.getElementById('export-csv');
 const filterSelect = document.getElementById('filter-status');
 const sortSelect = document.getElementById('sort-by');
 
+// Modal elements
+const reportSelectorModal = document.getElementById('report-selector-modal');
+const reportListEl = document.getElementById('report-list');
+const closeSelectorModalBtn = document.getElementById('close-selector-modal');
+const combineAllBtn = document.getElementById('combine-all-btn');
+
+// Advanced filter elements
+const toggleFiltersBtn = document.getElementById('toggle-filters-btn');
+const advancedFiltersPanel = document.getElementById('advanced-filters');
+const filterDomainInput = document.getElementById('filter-domain');
+const filterIpInput = document.getElementById('filter-ip');
+const filterCountrySelect = document.getElementById('filter-country');
+const filterMinCountInput = document.getElementById('filter-min-count');
+const filterHostnameInput = document.getElementById('filter-hostname');
+const applyFiltersBtn = document.getElementById('apply-filters-btn');
+const clearFiltersBtn = document.getElementById('clear-filters-btn');
+const activeFilterCountBadge = document.getElementById('active-filter-count');
+
+// Enrichment elements
+const enrichmentBanner = document.getElementById('enrichment-banner');
+const enrichmentMessage = document.getElementById('enrichment-message');
+const enrichNowBtn = document.getElementById('enrich-now-btn');
+const skipEnrichmentBtn = document.getElementById('skip-enrichment-btn');
+
+// XML modal elements
+const xmlModal = document.getElementById('xml-modal');
+const xmlContent = document.getElementById('xml-content');
+const viewXmlBtn = document.getElementById('view-xml-btn');
+const copyXmlBtn = document.getElementById('copy-xml-btn');
+const closeXmlModalBtn = document.getElementById('close-xml-modal');
+
+// Enrichment threshold - reports with more unique IPs than this will prompt
+const LARGE_REPORT_IP_THRESHOLD = 50;
+
+// Track enrichment state
+let enrichmentSkipped = false;
+
 // Current report data
 let currentReport = null;
+let currentRawXml = null; // Store for raw XML drilldown (Checkpoint 5)
 let ipGeoData = new Map();
-let currentFilter = 'all';
-let currentSort = 'count-desc';
 let pendingDownloadId = null; // Track if file came from download for cleanup
+let pendingExtraction = null; // Store multi-file extraction for modal handling
+
+// Filter state - centralized for all filter criteria
+const filterState = {
+  status: 'all',
+  domain: '',
+  ip: '',
+  country: '',
+  minCount: 0,
+  hostname: ''
+};
+
+// Sort state
+let currentSort = 'count-desc';
 
 /**
  * Show loading state
@@ -165,7 +218,8 @@ function renderHostnameCell(ip) {
     return `<td class="hostname-cell"><span class="location-loading">...</span></td>`;
   }
 
-  const hostname = formatHostname(geo);
+  // Escape hostname for XSS protection (data comes from external API)
+  const hostname = escapeHtml(formatHostname(geo));
   return `<td class="hostname-cell" title="${hostname}">${hostname || '-'}</td>`;
 }
 
@@ -185,8 +239,9 @@ function renderLocationCell(ip) {
     return `<td class="location-cell">Unknown</td>`;
   }
 
-  const location = formatLocation(geo);
-  const isp = formatIsp(geo);
+  // Escape geo data for XSS protection (data comes from external API)
+  const location = escapeHtml(formatLocation(geo));
+  const isp = escapeHtml(formatIsp(geo));
   return `<td class="location-cell" title="${isp}">${location}</td>`;
 }
 
@@ -376,10 +431,13 @@ function getRecordDiagnosis(record) {
 
   // Check alignment
   if (record.alignment?.headerEnvelopeMismatch) {
+    // Escape domain values to prevent XSS when rendered as HTML
+    const safeHeaderFrom = escapeHtml(identifiers.headerFrom) || 'unknown';
+    const safeEnvelopeFrom = escapeHtml(identifiers.envelopeFrom) || 'unknown';
     issues.push({
       type: 'alignment',
       title: 'Domain Alignment Mismatch',
-      explanation: `The From header domain (${identifiers.headerFrom || 'unknown'}) does not match the envelope sender domain (${identifiers.envelopeFrom || 'unknown'}). DMARC requires alignment between these domains.`,
+      explanation: `The From header domain (${safeHeaderFrom}) does not match the envelope sender domain (${safeEnvelopeFrom}). DMARC requires alignment between these domains.`,
       recommendations: [
         'Ensure the envelope From (Return-Path) matches or is a subdomain of the header From',
         'Configure your mail server to use the same domain for both',
@@ -458,6 +516,7 @@ function renderDiagnosis(record) {
 
 /**
  * Render details section for a record
+ * All user-controlled values (domains, selectors, etc.) are escaped to prevent XSS
  * @param {Object} record - Record data
  * @returns {string} HTML string for details
  */
@@ -465,13 +524,14 @@ function renderDetails(record) {
   const identifiers = record.identifiers || {};
   const authResults = record.authResults || { dkim: [], spf: [] };
 
+  // Escape all user-controlled values from DKIM results
   let dkimHtml = authResults.dkim.length > 0
     ? authResults.dkim.map(d => `
         <li>
-          <span class="label">Signing Domain:</span> <strong>${d.domain || '-'}</strong>
+          <span class="label">Signing Domain:</span> <strong>${escapeHtml(d.domain) || '-'}</strong>
         </li>
         <li>
-          <span class="label">Selector:</span> ${d.selector || '-'}
+          <span class="label">Selector:</span> ${escapeHtml(d.selector) || '-'}
         </li>
         <li>
           <span class="label">Result:</span> ${createBadge(d.result)}
@@ -479,13 +539,14 @@ function renderDetails(record) {
       `).join('')
     : '<li>No DKIM signature found</li>';
 
+  // Escape all user-controlled values from SPF results
   let spfHtml = authResults.spf.length > 0
     ? authResults.spf.map(s => `
         <li>
-          <span class="label">Checked Domain:</span> <strong>${s.domain || '-'}</strong>
+          <span class="label">Checked Domain:</span> <strong>${escapeHtml(s.domain) || '-'}</strong>
         </li>
         <li>
-          <span class="label">Scope:</span> ${s.scope || 'mfrom'}
+          <span class="label">Scope:</span> ${escapeHtml(s.scope) || 'mfrom'}
         </li>
         <li>
           <span class="label">Result:</span> ${createBadge(s.result)}
@@ -494,26 +555,32 @@ function renderDetails(record) {
     : '<li>No SPF check performed</li>';
 
   // Check for domain mismatches that affect alignment
+  // Use raw values for comparison, escaped values for display
   const headerFrom = identifiers.headerFrom || '';
   const dkimDomain = authResults.dkim[0]?.domain || '';
   const spfDomain = authResults.spf[0]?.domain || '';
 
   let alignmentNote = '';
   if (headerFrom && dkimDomain && !dkimDomain.endsWith(headerFrom) && !headerFrom.endsWith(dkimDomain)) {
-    alignmentNote += `<div class="alignment-note">DKIM signed by <strong>${dkimDomain}</strong> but From header is <strong>${headerFrom}</strong> - may fail DKIM alignment</div>`;
+    alignmentNote += `<div class="alignment-note">DKIM signed by <strong>${escapeHtml(dkimDomain)}</strong> but From header is <strong>${escapeHtml(headerFrom)}</strong> - may fail DKIM alignment</div>`;
   }
   if (headerFrom && spfDomain && !spfDomain.endsWith(headerFrom) && !headerFrom.endsWith(spfDomain)) {
-    alignmentNote += `<div class="alignment-note">SPF checked for <strong>${spfDomain}</strong> but From header is <strong>${headerFrom}</strong> - may fail SPF alignment</div>`;
+    alignmentNote += `<div class="alignment-note">SPF checked for <strong>${escapeHtml(spfDomain)}</strong> but From header is <strong>${escapeHtml(headerFrom)}</strong> - may fail SPF alignment</div>`;
   }
+
+  // Escape identifier values for display
+  const safeHeaderFrom = escapeHtml(identifiers.headerFrom) || '-';
+  const safeEnvelopeFrom = escapeHtml(identifiers.envelopeFrom) || '-';
+  const safeEnvelopeTo = escapeHtml(identifiers.envelopeTo) || '-';
 
   return `
     <div class="details-content">
       <div class="details-section">
         <h4>Message Identifiers</h4>
         <ul>
-          <li><span class="label">Header From:</span> <strong>${identifiers.headerFrom || '-'}</strong> <span class="identifier-hint">(visible to recipient)</span></li>
-          <li><span class="label">Envelope From:</span> ${identifiers.envelopeFrom || '-'} <span class="identifier-hint">(Return-Path/bounce address)</span></li>
-          <li><span class="label">Envelope To:</span> ${identifiers.envelopeTo || '-'} <span class="identifier-hint">(recipient domain)</span></li>
+          <li><span class="label">Header From:</span> <strong>${safeHeaderFrom}</strong> <span class="identifier-hint">(visible to recipient)</span></li>
+          <li><span class="label">Envelope From:</span> ${safeEnvelopeFrom} <span class="identifier-hint">(Return-Path/bounce address)</span></li>
+          <li><span class="label">Envelope To:</span> ${safeEnvelopeTo} <span class="identifier-hint">(recipient domain)</span></li>
         </ul>
       </div>
       <div class="details-section">
@@ -531,31 +598,256 @@ function renderDetails(record) {
 }
 
 /**
- * Filter records based on current filter
+ * Check if an IP address matches a filter (supports prefix and CIDR notation)
+ * @param {string} ip - IP address to check
+ * @param {string} filter - Filter value (prefix or CIDR like 192.168.1.0/24)
+ * @returns {boolean} True if IP matches filter
+ */
+function matchesIpFilter(ip, filter) {
+  if (!ip || !filter) return true;
+
+  const filterLower = filter.trim().toLowerCase();
+  const ipLower = ip.toLowerCase();
+
+  // CIDR notation check
+  if (filterLower.includes('/')) {
+    return isIpInCidr(ip, filterLower);
+  }
+
+  // Simple prefix match
+  return ipLower.startsWith(filterLower);
+}
+
+/**
+ * Check if an IPv4 address is within a CIDR range
+ * @param {string} ip - IP address to check
+ * @param {string} cidr - CIDR notation (e.g., 192.168.1.0/24)
+ * @returns {boolean} True if IP is in range
+ */
+function isIpInCidr(ip, cidr) {
+  try {
+    const [subnet, bitsStr] = cidr.split('/');
+    const bits = parseInt(bitsStr, 10);
+
+    if (isNaN(bits) || bits < 0 || bits > 32) return false;
+
+    const ipNum = ipToInt(ip);
+    const subnetNum = ipToInt(subnet);
+
+    if (ipNum === null || subnetNum === null) return false;
+
+    // Create mask: e.g., /24 = 0xFFFFFF00
+    const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+
+    return (ipNum & mask) === (subnetNum & mask);
+  } catch (err) {
+    return false;
+  }
+}
+
+/**
+ * Convert IPv4 address string to 32-bit integer
+ * @param {string} ip - IPv4 address
+ * @returns {number|null} Integer representation or null if invalid
+ */
+function ipToInt(ip) {
+  if (!ip) return null;
+
+  const parts = ip.split('.');
+  if (parts.length !== 4) return null;
+
+  let result = 0;
+  for (const part of parts) {
+    const num = parseInt(part, 10);
+    if (isNaN(num) || num < 0 || num > 255) return null;
+    result = (result << 8) | num;
+  }
+
+  return result >>> 0; // Ensure unsigned
+}
+
+/**
+ * Filter records based on current filter state
+ * Applies all active filters with AND logic
  * @param {Array} records - Array of record objects
  * @returns {Array} Filtered records
  */
 function filterRecords(records) {
-  if (currentFilter === 'all') return records;
-
   return records.filter(record => {
     const pe = record.policyEvaluated || {};
     const dkimPass = pe.dkim === 'pass';
     const spfPass = pe.spf === 'pass';
 
-    switch (currentFilter) {
-      case 'pass':
-        return dkimPass && spfPass;
-      case 'fail':
-        return !dkimPass || !spfPass;
-      case 'quarantine':
-        return pe.disposition === 'quarantine';
-      case 'reject':
-        return pe.disposition === 'reject';
-      default:
-        return true;
+    // Status filter
+    if (filterState.status !== 'all') {
+      switch (filterState.status) {
+        case 'pass':
+          if (!(dkimPass && spfPass)) return false;
+          break;
+        case 'fail':
+          if (dkimPass && spfPass) return false;
+          break;
+        case 'quarantine':
+          if (pe.disposition !== 'quarantine') return false;
+          break;
+        case 'reject':
+          if (pe.disposition !== 'reject') return false;
+          break;
+      }
     }
+
+    // Domain filter (searches header_from)
+    if (filterState.domain) {
+      const domain = (record.identifiers?.headerFrom || '').toLowerCase();
+      if (!domain.includes(filterState.domain.toLowerCase())) {
+        return false;
+      }
+    }
+
+    // IP filter (prefix or CIDR)
+    if (filterState.ip) {
+      if (!matchesIpFilter(record.sourceIp, filterState.ip)) {
+        return false;
+      }
+    }
+
+    // Country filter (requires geo data)
+    if (filterState.country) {
+      const geo = ipGeoData.get(record.sourceIp);
+      if (!geo || geo.countryCode !== filterState.country) {
+        return false;
+      }
+    }
+
+    // Minimum message count filter
+    if (filterState.minCount > 0) {
+      if (record.count < filterState.minCount) {
+        return false;
+      }
+    }
+
+    // Hostname filter (searches reverse DNS)
+    if (filterState.hostname) {
+      const geo = ipGeoData.get(record.sourceIp);
+      const hostname = (geo?.hostname || '').toLowerCase();
+      if (!hostname.includes(filterState.hostname.toLowerCase())) {
+        return false;
+      }
+    }
+
+    return true;
   });
+}
+
+/**
+ * Count the number of active filters
+ * @returns {number} Number of non-default filter values
+ */
+function countActiveFilters() {
+  let count = 0;
+  if (filterState.status !== 'all') count++;
+  if (filterState.domain) count++;
+  if (filterState.ip) count++;
+  if (filterState.country) count++;
+  if (filterState.minCount > 0) count++;
+  if (filterState.hostname) count++;
+  return count;
+}
+
+/**
+ * Update the active filter count badge
+ */
+function updateFilterBadge() {
+  const count = countActiveFilters();
+  if (count > 0) {
+    activeFilterCountBadge.textContent = count;
+    activeFilterCountBadge.classList.remove('hidden');
+  } else {
+    activeFilterCountBadge.classList.add('hidden');
+  }
+}
+
+/**
+ * Populate country dropdown from current geo data
+ */
+function populateCountryFilter() {
+  if (!filterCountrySelect) return;
+
+  const countries = new Map();
+  for (const [ip, geo] of ipGeoData.entries()) {
+    if (geo && geo.countryCode && geo.country) {
+      countries.set(geo.countryCode, geo.country);
+    }
+  }
+
+  // Sort by country name
+  const sorted = [...countries.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+
+  // Clear existing options except first
+  while (filterCountrySelect.options.length > 1) {
+    filterCountrySelect.remove(1);
+  }
+
+  // Add country options
+  for (const [code, name] of sorted) {
+    const option = document.createElement('option');
+    option.value = code;
+    option.textContent = name;
+    filterCountrySelect.appendChild(option);
+  }
+}
+
+/**
+ * Apply current filter input values to filter state
+ */
+function applyFilters() {
+  filterState.status = filterSelect?.value || 'all';
+  filterState.domain = filterDomainInput?.value?.trim() || '';
+  filterState.ip = filterIpInput?.value?.trim() || '';
+  filterState.country = filterCountrySelect?.value || '';
+  filterState.minCount = parseInt(filterMinCountInput?.value, 10) || 0;
+  filterState.hostname = filterHostnameInput?.value?.trim() || '';
+
+  updateFilterBadge();
+
+  if (currentReport) {
+    renderRecords(currentReport.records);
+  }
+}
+
+/**
+ * Clear all filters to default values
+ */
+function clearFilters() {
+  filterState.status = 'all';
+  filterState.domain = '';
+  filterState.ip = '';
+  filterState.country = '';
+  filterState.minCount = 0;
+  filterState.hostname = '';
+
+  // Reset input elements
+  if (filterSelect) filterSelect.value = 'all';
+  if (filterDomainInput) filterDomainInput.value = '';
+  if (filterIpInput) filterIpInput.value = '';
+  if (filterCountrySelect) filterCountrySelect.value = '';
+  if (filterMinCountInput) filterMinCountInput.value = '';
+  if (filterHostnameInput) filterHostnameInput.value = '';
+
+  updateFilterBadge();
+
+  if (currentReport) {
+    renderRecords(currentReport.records);
+  }
+}
+
+/**
+ * Toggle the advanced filters panel visibility
+ */
+function toggleFiltersPanel() {
+  const isHidden = advancedFiltersPanel.classList.contains('hidden');
+  advancedFiltersPanel.classList.toggle('hidden');
+  toggleFiltersBtn.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
 }
 
 /**
@@ -587,6 +879,7 @@ function sortRecords(records) {
 
 /**
  * Render From Domain cell with auth domains tooltip
+ * All user-controlled values are escaped to prevent XSS
  * @param {Object} record - Record data
  * @returns {string} HTML string for from domain cell
  */
@@ -594,14 +887,16 @@ function renderFromDomainCell(record) {
   const identifiers = record.identifiers || {};
   const authResults = record.authResults || { dkim: [], spf: [] };
 
-  const headerFrom = identifiers.headerFrom || '-';
-  const envelopeFrom = identifiers.envelopeFrom || '-';
+  // Escape all domain values for safe HTML output
+  const headerFrom = escapeHtml(identifiers.headerFrom) || '-';
+  const envelopeFrom = escapeHtml(identifiers.envelopeFrom) || '-';
 
-  // Get auth domains for tooltip
-  const dkimDomains = authResults.dkim.map(d => d.domain).filter(Boolean).join(', ') || '-';
-  const spfDomains = authResults.spf.map(s => s.domain).filter(Boolean).join(', ') || '-';
+  // Get and escape auth domains for tooltip
+  const dkimDomains = authResults.dkim.map(d => escapeHtml(d.domain)).filter(Boolean).join(', ') || '-';
+  const spfDomains = authResults.spf.map(s => escapeHtml(s.domain)).filter(Boolean).join(', ') || '-';
 
-  const tooltip = `Header From: ${headerFrom}\nEnvelope From: ${envelopeFrom}\nDKIM Domain: ${dkimDomains}\nSPF Domain: ${spfDomains}`;
+  // Build tooltip - already escaped values, but also escape for attribute context
+  const tooltip = escapeHtml(`Header From: ${identifiers.headerFrom || '-'}\nEnvelope From: ${identifiers.envelopeFrom || '-'}\nDKIM Domain: ${authResults.dkim.map(d => d.domain).filter(Boolean).join(', ') || '-'}\nSPF Domain: ${authResults.spf.map(s => s.domain).filter(Boolean).join(', ') || '-'}`);
 
   return `<td class="domain-cell" title="${tooltip}">${headerFrom}</td>`;
 }
@@ -620,11 +915,12 @@ function renderRecords(records) {
     const pe = record.policyEvaluated || {};
     const rowClass = getRowClass(record);
 
-    // Main row
+    // Main row - escape sourceIp for XSS protection
     const mainRow = document.createElement('tr');
     mainRow.className = rowClass;
+    const safeIp = escapeHtml(record.sourceIp) || '-';
     mainRow.innerHTML = `
-      <td class="ip-cell">${record.sourceIp || '-'}</td>
+      <td class="ip-cell">${safeIp}</td>
       ${renderHostnameCell(record.sourceIp)}
       ${renderLocationCell(record.sourceIp)}
       ${renderFromDomainCell(record)}
@@ -668,8 +964,15 @@ function renderRecords(records) {
 function updateLocationCells() {
   if (!currentReport) return;
 
+  // Populate country dropdown with discovered countries
+  populateCountryFilter();
+
   // Re-render the entire table to update hostname and location cells
   renderRecords(currentReport.records);
+
+  // Re-calculate and render analysis with geo data now available
+  const analysis = calculateAnalysis(currentReport.records);
+  renderAnalysis(analysis, currentReport.summary.totalMessages);
 }
 
 /**
@@ -690,55 +993,373 @@ async function loadIpGeoData(records) {
 }
 
 /**
+ * Calculate top-N analysis from records
+ * @param {Array} records - Array of record objects
+ * @returns {Object} Analysis data with top lists
+ */
+function calculateAnalysis(records) {
+  const analysis = {
+    topSenders: [],      // Top IPs by message count
+    topFailures: [],     // Top failing domains
+    topCountries: [],    // Top countries by message count
+    topAsns: []          // Top ASNs by message count
+  };
+
+  // Aggregate data
+  const ipCounts = new Map();
+  const domainFailures = new Map();
+  const countryCounts = new Map();
+  const asnCounts = new Map();
+
+  for (const record of records) {
+    const count = record.count || 0;
+    const ip = record.sourceIp;
+
+    // IP counts
+    if (ip) {
+      ipCounts.set(ip, (ipCounts.get(ip) || 0) + count);
+    }
+
+    // Domain failures (only count failing records)
+    const pe = record.policyEvaluated || {};
+    const dkimPass = pe.dkim === 'pass';
+    const spfPass = pe.spf === 'pass';
+
+    if (!dkimPass || !spfPass) {
+      const domain = record.identifiers?.headerFrom || 'unknown';
+      domainFailures.set(domain, (domainFailures.get(domain) || 0) + count);
+    }
+
+    // Country and ASN counts (require geo data)
+    const geo = ipGeoData.get(ip);
+    if (geo && !geo.error) {
+      if (geo.country) {
+        const key = `${geo.countryCode}|${geo.country}`;
+        countryCounts.set(key, (countryCounts.get(key) || 0) + count);
+      }
+      if (geo.asn) {
+        asnCounts.set(geo.asn, (asnCounts.get(geo.asn) || 0) + count);
+      }
+    }
+  }
+
+  // Sort and take top 10 for each
+  analysis.topSenders = [...ipCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([ip, count]) => ({
+      ip,
+      count,
+      geo: ipGeoData.get(ip)
+    }));
+
+  analysis.topFailures = [...domainFailures.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([domain, count]) => ({ domain, count }));
+
+  analysis.topCountries = [...countryCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([key, count]) => {
+      const [code, name] = key.split('|');
+      return { code, name, count };
+    });
+
+  analysis.topAsns = [...asnCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([asn, count]) => ({ asn, count }));
+
+  return analysis;
+}
+
+/**
+ * Render the analysis section
+ * @param {Object} analysis - Analysis data from calculateAnalysis
+ * @param {number} totalMessages - Total message count for percentage calculation
+ */
+function renderAnalysis(analysis, totalMessages) {
+  const topSendersList = document.getElementById('top-senders-list');
+  const topFailuresList = document.getElementById('top-failures-list');
+  const topCountriesList = document.getElementById('top-countries-list');
+  const topAsnsList = document.getElementById('top-asns-list');
+
+  const maxCount = Math.max(
+    analysis.topSenders[0]?.count || 0,
+    analysis.topCountries[0]?.count || 0,
+    analysis.topAsns[0]?.count || 0,
+    1
+  );
+  const maxFailCount = analysis.topFailures[0]?.count || 1;
+
+  // Render top senders
+  if (topSendersList) {
+    if (analysis.topSenders.length === 0) {
+      topSendersList.innerHTML = '<div class="analysis-empty">No data</div>';
+    } else {
+      topSendersList.innerHTML = analysis.topSenders.map((item, i) => {
+        const geo = item.geo;
+        const location = geo && !geo.error
+          ? `${geo.flag || ''} ${geo.city || ''} ${geo.country || ''}`.trim()
+          : '';
+        const pct = ((item.count / maxCount) * 100).toFixed(0);
+
+        return `
+          <div class="analysis-item" title="${escapeHtml(item.ip)}">
+            <span class="analysis-item-rank">${i + 1}</span>
+            <div class="analysis-item-info">
+              <div class="analysis-item-label">${escapeHtml(item.ip)}</div>
+              <div class="analysis-item-sublabel">${escapeHtml(location) || 'Unknown location'}</div>
+            </div>
+            <div class="analysis-item-value">${item.count.toLocaleString()}</div>
+            <div class="analysis-item-bar">
+              <div class="analysis-item-bar-fill fill-primary" style="width: ${pct}%"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // Render top failures
+  if (topFailuresList) {
+    if (analysis.topFailures.length === 0) {
+      topFailuresList.innerHTML = '<div class="analysis-empty">No failures</div>';
+    } else {
+      topFailuresList.innerHTML = analysis.topFailures.map((item, i) => {
+        const pct = ((item.count / maxFailCount) * 100).toFixed(0);
+        return `
+          <div class="analysis-item">
+            <span class="analysis-item-rank">${i + 1}</span>
+            <div class="analysis-item-info">
+              <div class="analysis-item-label">${escapeHtml(item.domain)}</div>
+            </div>
+            <div class="analysis-item-value">${item.count.toLocaleString()}</div>
+            <div class="analysis-item-bar">
+              <div class="analysis-item-bar-fill fill-fail" style="width: ${pct}%"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // Render top countries
+  if (topCountriesList) {
+    if (analysis.topCountries.length === 0) {
+      topCountriesList.innerHTML = '<div class="analysis-loading">Waiting for geo data...</div>';
+    } else {
+      topCountriesList.innerHTML = analysis.topCountries.map((item, i) => {
+        const flag = countryCodeToFlag(item.code);
+        const pct = ((item.count / maxCount) * 100).toFixed(0);
+        return `
+          <div class="analysis-item">
+            <span class="analysis-item-rank">${i + 1}</span>
+            <div class="analysis-item-info">
+              <div class="analysis-item-label">${flag} ${escapeHtml(item.name)}</div>
+            </div>
+            <div class="analysis-item-value">${item.count.toLocaleString()}</div>
+            <div class="analysis-item-bar">
+              <div class="analysis-item-bar-fill fill-primary" style="width: ${pct}%"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // Render top ASNs
+  if (topAsnsList) {
+    if (analysis.topAsns.length === 0) {
+      topAsnsList.innerHTML = '<div class="analysis-loading">Waiting for geo data...</div>';
+    } else {
+      topAsnsList.innerHTML = analysis.topAsns.map((item, i) => {
+        const pct = ((item.count / maxCount) * 100).toFixed(0);
+        return `
+          <div class="analysis-item">
+            <span class="analysis-item-rank">${i + 1}</span>
+            <div class="analysis-item-info">
+              <div class="analysis-item-label" title="${escapeHtml(item.asn)}">${escapeHtml(item.asn)}</div>
+            </div>
+            <div class="analysis-item-value">${item.count.toLocaleString()}</div>
+            <div class="analysis-item-bar">
+              <div class="analysis-item-bar-fill fill-primary" style="width: ${pct}%"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+}
+
+/**
+ * Country code to flag emoji (duplicated from ip-lookup.js for viewer context)
+ * @param {string} countryCode - Two-letter country code
+ * @returns {string} Flag emoji
+ */
+function countryCodeToFlag(countryCode) {
+  if (!countryCode || countryCode.length !== 2) return '';
+  const codePoints = countryCode
+    .toUpperCase()
+    .split('')
+    .map(char => 0x1f1e6 + char.charCodeAt(0) - 65);
+  return String.fromCodePoint(...codePoints);
+}
+
+/**
+ * Get the number of unique IPs in records
+ * @param {Array} records - Array of record objects
+ * @returns {number} Unique IP count
+ */
+function getUniqueIpCount(records) {
+  const uniqueIps = new Set();
+  for (const record of records) {
+    if (record.sourceIp) {
+      uniqueIps.add(record.sourceIp);
+    }
+  }
+  return uniqueIps.size;
+}
+
+/**
+ * Show enrichment banner for large reports
+ * @param {number} uniqueIpCount - Number of unique IPs
+ */
+function showEnrichmentBanner(uniqueIpCount) {
+  if (!enrichmentBanner) return;
+
+  enrichmentMessage.textContent =
+    `This report has ${uniqueIpCount} unique IPs. Enrichment adds location and hostname data but may be slow.`;
+  enrichmentBanner.classList.remove('hidden');
+}
+
+/**
+ * Hide enrichment banner
+ */
+function hideEnrichmentBanner() {
+  if (!enrichmentBanner) return;
+  enrichmentBanner.classList.add('hidden');
+}
+
+/**
+ * Trigger IP enrichment for current report
+ */
+function triggerEnrichment() {
+  hideEnrichmentBanner();
+  if (currentReport) {
+    loadIpGeoData(currentReport.records);
+  }
+}
+
+/**
  * Display a parsed DMARC report
  * @param {Object} report - Parsed DMARC report
  */
 function displayReport(report) {
   currentReport = report;
+  enrichmentSkipped = false;
 
   renderSummary(report.summary);
   renderMetadata(report.metadata);
   renderPolicy(report.policy);
   renderRecords(report.records);
 
+  // Initial analysis render (will be updated after geo data loads)
+  const analysis = calculateAnalysis(report.records);
+  renderAnalysis(analysis, report.summary.totalMessages);
+
   // Show export buttons
   exportButtons.classList.remove('hidden');
 
   showReport();
 
-  // Load IP geolocation data asynchronously
-  loadIpGeoData(report.records);
+  // Check if this is a large report
+  const uniqueIpCount = getUniqueIpCount(report.records);
+
+  if (uniqueIpCount > LARGE_REPORT_IP_THRESHOLD) {
+    // Large report - offer opt-in enrichment
+    showEnrichmentBanner(uniqueIpCount);
+  } else {
+    // Small report - auto-enrich
+    hideEnrichmentBanner();
+    loadIpGeoData(report.records);
+  }
 }
 
 /**
  * Export report as JSON
+ * Exports filtered records if filters are active
  */
 function exportAsJson() {
   if (!currentReport) return;
 
-  const dataStr = JSON.stringify(currentReport, null, 2);
+  // Apply current filters to get exported records
+  const filteredRecords = filterRecords(currentReport.records);
+  const activeFilterCount = countActiveFilters();
+
+  // Build export object with filtered records
+  const exportData = {
+    ...currentReport,
+    records: filteredRecords,
+    _exportMetadata: {
+      exportedAt: new Date().toISOString(),
+      totalRecords: currentReport.records.length,
+      filteredRecords: filteredRecords.length,
+      filtersApplied: activeFilterCount > 0,
+      filterState: activeFilterCount > 0 ? { ...filterState } : null
+    }
+  };
+
+  // Include analysis in export
+  const analysis = calculateAnalysis(filteredRecords);
+  exportData._analysis = {
+    topSendingIps: analysis.topSenders.map(item => ({
+      ip: item.ip,
+      count: item.count,
+      location: item.geo ? `${item.geo.city || ''} ${item.geo.country || ''}`.trim() : null
+    })),
+    topFailingDomains: analysis.topFailures,
+    topCountries: analysis.topCountries,
+    topAsns: analysis.topAsns.map(item => ({ asn: item.asn, count: item.count }))
+  };
+
+  const dataStr = JSON.stringify(exportData, null, 2);
   const blob = new Blob([dataStr], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
 
   const a = document.createElement('a');
   a.href = url;
-  a.download = `dmarc-report-${currentReport.metadata?.reportId || 'export'}.json`;
+  const suffix = activeFilterCount > 0 ? '-filtered' : '';
+  a.download = `dmarc-report-${currentReport.metadata?.reportId || 'export'}${suffix}.json`;
   a.click();
 
   URL.revokeObjectURL(url);
+
+  // Show feedback
+  if (activeFilterCount > 0) {
+    showToast(`Exported ${filteredRecords.length} of ${currentReport.records.length} records (filtered)`);
+  }
 }
 
 /**
  * Export report as CSV
+ * Exports filtered records if filters are active
  */
 function exportAsCsv() {
   if (!currentReport) return;
+
+  // Apply current filters and sort
+  const filteredRecords = filterRecords(currentReport.records);
+  const sortedRecords = sortRecords(filteredRecords);
+  const activeFilterCount = countActiveFilters();
 
   const headers = [
     'Source IP',
     'Hostname',
     'Country',
     'City',
+    'ISP/ASN',
     'Count',
     'Disposition',
     'DKIM Result',
@@ -746,20 +1367,26 @@ function exportAsCsv() {
     'Header From',
     'Envelope From',
     'DKIM Signing Domain',
-    'SPF Checked Domain'
+    'SPF Checked Domain',
+    'Pass/Fail'
   ];
 
-  const rows = currentReport.records.map(record => {
+  const rows = sortedRecords.map(record => {
     const pe = record.policyEvaluated || {};
     const id = record.identifiers || {};
     const auth = record.authResults || { dkim: [], spf: [] };
     const geo = ipGeoData.get(record.sourceIp) || {};
+
+    const dkimPass = pe.dkim === 'pass';
+    const spfPass = pe.spf === 'pass';
+    const passStatus = dkimPass && spfPass ? 'PASS' : (!dkimPass && !spfPass ? 'FAIL' : 'PARTIAL');
 
     return [
       record.sourceIp || '',
       geo.hostname || '',
       geo.country || '',
       geo.city || '',
+      geo.asn || geo.isp || '',
       record.count,
       pe.disposition || '',
       pe.dkim || '',
@@ -767,7 +1394,8 @@ function exportAsCsv() {
       id.headerFrom || '',
       id.envelopeFrom || '',
       auth.dkim.map(d => d.domain).filter(Boolean).join('; ') || '',
-      auth.spf.map(s => s.domain).filter(Boolean).join('; ') || ''
+      auth.spf.map(s => s.domain).filter(Boolean).join('; ') || '',
+      passStatus
     ];
   });
 
@@ -781,10 +1409,16 @@ function exportAsCsv() {
 
   const a = document.createElement('a');
   a.href = url;
-  a.download = `dmarc-report-${currentReport.metadata?.reportId || 'export'}.csv`;
+  const suffix = activeFilterCount > 0 ? '-filtered' : '';
+  a.download = `dmarc-report-${currentReport.metadata?.reportId || 'export'}${suffix}.csv`;
   a.click();
 
   URL.revokeObjectURL(url);
+
+  // Show feedback
+  if (activeFilterCount > 0) {
+    showToast(`Exported ${sortedRecords.length} of ${currentReport.records.length} records (filtered)`);
+  }
 }
 
 /**
@@ -797,6 +1431,402 @@ function initCollapsibleSections() {
       section.classList.toggle('collapsed');
     });
   });
+}
+
+/**
+ * Parse a report XML to extract preview metadata for the selector
+ * This is a lightweight parse that only extracts what we need for display
+ * @param {string} xml - Raw XML string
+ * @returns {Object|null} Preview metadata or null if parsing fails
+ */
+function parseReportPreview(xml) {
+  try {
+    const report = parseDmarcReport(xml);
+    return {
+      orgName: report.metadata?.orgName || 'Unknown',
+      reportId: report.metadata?.reportId || 'Unknown',
+      dateRange: report.metadata?.dateRange,
+      totalMessages: report.summary?.totalMessages || 0,
+      recordCount: report.records?.length || 0,
+      passRate: report.summary?.overallPassRate || 0
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Show the report selector modal for multi-file ZIPs
+ * @param {Array<{filename: string, xml: string}>} files - Array of extracted files
+ */
+function showReportSelectorModal(files) {
+  pendingExtraction = files;
+  reportListEl.innerHTML = '';
+
+  files.forEach((file, index) => {
+    const preview = parseReportPreview(file.xml);
+    const item = document.createElement('div');
+    item.className = 'report-item';
+    item.setAttribute('role', 'button');
+    item.setAttribute('tabindex', '0');
+
+    const dateStr = preview?.dateRange
+      ? `${formatDate(preview.dateRange.begin)} - ${formatDate(preview.dateRange.end)}`
+      : 'Unknown date range';
+
+    const passRateStr = preview ? `${preview.passRate.toFixed(0)}% pass` : '';
+    const msgCountStr = preview ? `${preview.totalMessages.toLocaleString()} messages` : '';
+
+    item.innerHTML = `
+      <div class="report-item-info">
+        <div class="report-item-filename" title="${escapeHtml(file.filename)}">${escapeHtml(file.filename)}</div>
+        <div class="report-item-meta">
+          <span>${escapeHtml(preview?.orgName || 'Unknown')}</span>
+          <span>${msgCountStr}</span>
+          <span>${passRateStr}</span>
+        </div>
+      </div>
+      <button class="report-item-action" data-index="${index}">View</button>
+    `;
+
+    // Click anywhere on item to view
+    item.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('report-item-action')) {
+        selectReport(index);
+      }
+    });
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectReport(index);
+      }
+    });
+
+    // View button click
+    const viewBtn = item.querySelector('.report-item-action');
+    viewBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectReport(index);
+    });
+
+    reportListEl.appendChild(item);
+  });
+
+  reportSelectorModal.classList.remove('hidden');
+  // Focus first item for accessibility
+  const firstItem = reportListEl.querySelector('.report-item');
+  if (firstItem) firstItem.focus();
+}
+
+/**
+ * Hide the report selector modal
+ */
+function hideReportSelectorModal() {
+  reportSelectorModal.classList.add('hidden');
+  pendingExtraction = null;
+}
+
+/**
+ * Apply basic XML syntax highlighting
+ * Security: All user content is HTML-escaped BEFORE regex processing.
+ * The regex patterns only wrap already-escaped content in span tags.
+ * @param {string} xml - Raw XML string
+ * @returns {string} HTML with syntax highlighting spans
+ */
+function highlightXml(xml) {
+  if (!xml) return '';
+
+  // Escape ALL HTML-significant characters first to prevent XSS
+  // This MUST happen before any regex processing
+  let escaped = xml
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  // From this point, no user content can contain executable HTML.
+  // All < > " ' & are now entity-encoded.
+
+  // Highlight XML declaration
+  escaped = escaped.replace(
+    /(&lt;\?xml[^?]*\?&gt;)/g,
+    '<span class="xml-declaration">$1</span>'
+  );
+
+  // Highlight comments
+  escaped = escaped.replace(
+    /(&lt;!--[\s\S]*?--&gt;)/g,
+    '<span class="xml-comment">$1</span>'
+  );
+
+  // Highlight tags (opening and closing)
+  escaped = escaped.replace(
+    /(&lt;\/?)([\w:-]+)/g,
+    '$1<span class="xml-tag">$2</span>'
+  );
+
+  // Highlight attributes (name before =)
+  escaped = escaped.replace(
+    /(\s)([\w:-]+)(=)/g,
+    '$1<span class="xml-attr">$2</span>$3'
+  );
+
+  // Highlight attribute values (now using &quot; since we escaped quotes)
+  escaped = escaped.replace(
+    /=&quot;([^&]*(?:&(?!quot;)[^&]*)*)&quot;/g,
+    '=&quot;<span class="xml-value">$1</span>&quot;'
+  );
+
+  return escaped;
+}
+
+/**
+ * Show the raw XML modal
+ */
+function showXmlModal() {
+  if (!xmlModal || !xmlContent) return;
+
+  if (!currentRawXml) {
+    showToast('Raw XML not available for combined reports');
+    return;
+  }
+
+  // Apply syntax highlighting
+  xmlContent.innerHTML = highlightXml(currentRawXml);
+  xmlModal.classList.remove('hidden');
+
+  // Focus the modal for accessibility
+  xmlContent.focus();
+}
+
+/**
+ * Hide the raw XML modal
+ */
+function hideXmlModal() {
+  if (!xmlModal) return;
+  xmlModal.classList.add('hidden');
+}
+
+/**
+ * Copy raw XML to clipboard
+ */
+async function copyXmlToClipboard() {
+  if (!currentRawXml) {
+    showToast('No XML to copy');
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(currentRawXml);
+    showToast('XML copied to clipboard');
+  } catch (err) {
+    // Fallback for older browsers
+    const textarea = document.createElement('textarea');
+    textarea.value = currentRawXml;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    showToast('XML copied to clipboard');
+  }
+}
+
+/**
+ * Show a toast notification
+ * @param {string} message - Message to display
+ * @param {number} duration - Duration in ms (default 2500)
+ */
+function showToast(message, duration = 2500) {
+  // Remove existing toast if any
+  const existing = document.querySelector('.toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.remove();
+  }, duration);
+}
+
+/**
+ * Select and display a single report from the pending extraction
+ * @param {number} index - Index of the report to display
+ */
+function selectReport(index) {
+  if (!pendingExtraction || !pendingExtraction[index]) return;
+
+  const file = pendingExtraction[index];
+  hideReportSelectorModal();
+
+  try {
+    currentRawXml = file.xml;
+    const report = parseDmarcReport(file.xml);
+    displayReport(report);
+  } catch (err) {
+    showError(`Failed to parse report: ${err.message}`);
+  }
+}
+
+/**
+ * Combine multiple DMARC reports into a single aggregated report
+ * Records are merged, and summary statistics are recalculated
+ * @param {Array<{filename: string, xml: string}>} files - Array of extracted files
+ * @returns {Object} Combined report object
+ */
+function combineReports(files) {
+  const parsedReports = [];
+  const parseErrors = [];
+
+  // Parse all reports
+  for (const file of files) {
+    try {
+      const report = parseDmarcReport(file.xml);
+      report._sourceFilename = file.filename;
+      parsedReports.push(report);
+    } catch (err) {
+      parseErrors.push({ filename: file.filename, error: err.message });
+    }
+  }
+
+  if (parsedReports.length === 0) {
+    throw new Error('No valid reports could be parsed');
+  }
+
+  // Use first report as base for metadata (or aggregate)
+  const baseReport = parsedReports[0];
+  const allRecords = [];
+
+  // Collect all records from all reports
+  for (const report of parsedReports) {
+    for (const record of report.records) {
+      // Add source attribution for debugging
+      record._sourceReport = report.metadata?.reportId || report._sourceFilename;
+      allRecords.push(record);
+    }
+  }
+
+  // Recalculate summary statistics
+  let totalMessages = 0;
+  let passedDkim = 0;
+  let failedDkim = 0;
+  let passedSpf = 0;
+  let failedSpf = 0;
+  let passedBoth = 0;
+  let failedBoth = 0;
+  let quarantined = 0;
+  let rejected = 0;
+
+  for (const record of allRecords) {
+    const count = record.count;
+    totalMessages += count;
+
+    const dkimPass = record.policyEvaluated?.dkim === 'pass';
+    const spfPass = record.policyEvaluated?.spf === 'pass';
+    const disposition = record.policyEvaluated?.disposition;
+
+    if (dkimPass) passedDkim += count;
+    else failedDkim += count;
+
+    if (spfPass) passedSpf += count;
+    else failedSpf += count;
+
+    if (dkimPass && spfPass) passedBoth += count;
+    if (!dkimPass && !spfPass) failedBoth += count;
+
+    if (disposition === 'quarantine') quarantined += count;
+    if (disposition === 'reject') rejected += count;
+  }
+
+  // Find overall date range across all reports
+  let earliestDate = null;
+  let latestDate = null;
+  for (const report of parsedReports) {
+    const dr = report.metadata?.dateRange;
+    if (dr?.begin && (!earliestDate || dr.begin < earliestDate)) {
+      earliestDate = dr.begin;
+    }
+    if (dr?.end && (!latestDate || dr.end > latestDate)) {
+      latestDate = dr.end;
+    }
+  }
+
+  // Build combined report
+  return {
+    version: baseReport.version,
+    metadata: {
+      orgName: `Combined (${parsedReports.length} reports)`,
+      email: baseReport.metadata?.email,
+      reportId: `combined-${Date.now()}`,
+      dateRange: earliestDate && latestDate ? { begin: earliestDate, end: latestDate } : null,
+      _sourceReports: parsedReports.map(r => ({
+        filename: r._sourceFilename,
+        reportId: r.metadata?.reportId,
+        orgName: r.metadata?.orgName
+      }))
+    },
+    policy: baseReport.policy, // Use policy from first report
+    records: allRecords,
+    summary: {
+      totalMessages,
+      passedDkim,
+      failedDkim,
+      passedSpf,
+      failedSpf,
+      passedBoth,
+      failedBoth,
+      quarantined,
+      rejected,
+      dkimPassRate: totalMessages > 0 ? (passedDkim / totalMessages * 100) : 0,
+      spfPassRate: totalMessages > 0 ? (passedSpf / totalMessages * 100) : 0,
+      overallPassRate: totalMessages > 0 ? (passedBoth / totalMessages * 100) : 0
+    },
+    _isCombined: true,
+    _reportCount: parsedReports.length,
+    _parseErrors: parseErrors
+  };
+}
+
+/**
+ * Handle extraction result - display single report or show selector for multiple
+ * @param {ExtractionResult} extraction - Result from extractXmlFromFile
+ */
+function handleExtraction(extraction) {
+  if (!extraction || !extraction.files || extraction.files.length === 0) {
+    showError('No DMARC reports found in file');
+    return;
+  }
+
+  if (extraction.files.length === 1) {
+    // Single report - display directly
+    try {
+      currentRawXml = extraction.files[0].xml;
+      const report = parseDmarcReport(extraction.files[0].xml);
+      displayReport(report);
+    } catch (err) {
+      showError(`Failed to parse report: ${err.message}`);
+    }
+  } else {
+    // Multiple reports - show selector modal
+    showReportSelectorModal(extraction.files);
+  }
+}
+
+/**
+ * Escape HTML special characters to prevent XSS
+ * @param {string} str - String to escape
+ * @returns {string} Escaped string
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 /**
@@ -817,9 +1847,8 @@ async function processFile(file) {
 
   try {
     const buffer = await file.arrayBuffer();
-    const xml = await extractXmlFromFile(buffer, file.name);
-    const report = parseDmarcReport(xml);
-    displayReport(report);
+    const extraction = await extractXmlFromFile(buffer, file.name);
+    handleExtraction(extraction);
 
     // Clean up downloaded file if this came from webmail
     cleanupDownloadedFile();
@@ -879,18 +1908,134 @@ document.body.addEventListener('drop', (e) => {
 exportJsonBtn.addEventListener('click', exportAsJson);
 exportCsvBtn.addEventListener('click', exportAsCsv);
 
-// Filter and sort handlers
-filterSelect.addEventListener('change', (e) => {
-  currentFilter = e.target.value;
-  if (currentReport) {
-    renderRecords(currentReport.records);
+// Filter panel toggle
+if (toggleFiltersBtn) {
+  toggleFiltersBtn.addEventListener('click', toggleFiltersPanel);
+}
+
+// Apply filters button
+if (applyFiltersBtn) {
+  applyFiltersBtn.addEventListener('click', applyFilters);
+}
+
+// Clear filters button
+if (clearFiltersBtn) {
+  clearFiltersBtn.addEventListener('click', clearFilters);
+}
+
+// Filter inputs - apply on Enter key
+const filterInputs = [filterDomainInput, filterIpInput, filterMinCountInput, filterHostnameInput];
+filterInputs.forEach(input => {
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        applyFilters();
+      }
+    });
   }
 });
 
-sortSelect.addEventListener('change', (e) => {
-  currentSort = e.target.value;
-  if (currentReport) {
-    renderRecords(currentReport.records);
+// Status filter (also triggers immediate apply for backwards compat)
+if (filterSelect) {
+  filterSelect.addEventListener('change', () => {
+    filterState.status = filterSelect.value;
+    updateFilterBadge();
+    if (currentReport) {
+      renderRecords(currentReport.records);
+    }
+  });
+}
+
+// Country filter (immediate apply)
+if (filterCountrySelect) {
+  filterCountrySelect.addEventListener('change', () => {
+    filterState.country = filterCountrySelect.value;
+    updateFilterBadge();
+    if (currentReport) {
+      renderRecords(currentReport.records);
+    }
+  });
+}
+
+// Sort handler
+if (sortSelect) {
+  sortSelect.addEventListener('change', (e) => {
+    currentSort = e.target.value;
+    if (currentReport) {
+      renderRecords(currentReport.records);
+    }
+  });
+}
+
+// Enrichment handlers
+if (enrichNowBtn) {
+  enrichNowBtn.addEventListener('click', () => {
+    triggerEnrichment();
+  });
+}
+
+if (skipEnrichmentBtn) {
+  skipEnrichmentBtn.addEventListener('click', () => {
+    enrichmentSkipped = true;
+    hideEnrichmentBanner();
+  });
+}
+
+// Modal event listeners
+if (closeSelectorModalBtn) {
+  closeSelectorModalBtn.addEventListener('click', hideReportSelectorModal);
+}
+
+if (combineAllBtn) {
+  combineAllBtn.addEventListener('click', () => {
+    if (!pendingExtraction || pendingExtraction.length < 2) return;
+
+    hideReportSelectorModal();
+    showLoading();
+
+    try {
+      const combinedReport = combineReports(pendingExtraction);
+      // For combined reports, we don't have a single raw XML
+      currentRawXml = null;
+      displayReport(combinedReport);
+    } catch (err) {
+      showError(`Failed to combine reports: ${err.message}`);
+    }
+  });
+}
+
+// Close modal on backdrop click
+if (reportSelectorModal) {
+  reportSelectorModal.querySelector('.modal-backdrop')?.addEventListener('click', hideReportSelectorModal);
+}
+
+// XML modal event listeners
+if (viewXmlBtn) {
+  viewXmlBtn.addEventListener('click', showXmlModal);
+}
+
+if (closeXmlModalBtn) {
+  closeXmlModalBtn.addEventListener('click', hideXmlModal);
+}
+
+if (copyXmlBtn) {
+  copyXmlBtn.addEventListener('click', copyXmlToClipboard);
+}
+
+if (xmlModal) {
+  xmlModal.querySelector('.modal-backdrop')?.addEventListener('click', hideXmlModal);
+}
+
+// Close modals on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (reportSelectorModal && !reportSelectorModal.classList.contains('hidden')) {
+      hideReportSelectorModal();
+    }
+    if (xmlModal && !xmlModal.classList.contains('hidden')) {
+      hideXmlModal();
+    }
   }
 });
 
@@ -1029,18 +2174,10 @@ function showDownloadNotification(downloadInfo) {
 }
 
 /**
- * Clean up the downloaded file after successful processing
+ * Clean up UI after successful processing of a downloaded file
  */
 function cleanupDownloadedFile() {
   if (!pendingDownloadId) return;
-
-  if (typeof chrome !== 'undefined' && chrome.runtime) {
-    chrome.runtime.sendMessage({
-      action: 'cleanupDownload',
-      downloadId: pendingDownloadId
-    });
-    console.log('DMARC Viewer: Requested cleanup of download', pendingDownloadId);
-  }
 
   pendingDownloadId = null;
 
@@ -1121,7 +2258,18 @@ function showWaitingForDownload(filename) {
   const pollInterval = setInterval(() => {
     pollCount++;
 
-    chrome.storage.local.get(['currentXml', 'downloadComplete'], (result) => {
+    chrome.storage.local.get([STORAGE_KEY_REPORT_DATA, 'currentXml', 'downloadComplete'], (result) => {
+      // Check new format first
+      if (result[STORAGE_KEY_REPORT_DATA]) {
+        clearInterval(pollInterval);
+        banner.remove();
+        document.body.style.paddingTop = '';
+        chrome.storage.local.remove([STORAGE_KEY_REPORT_DATA, 'downloadComplete']);
+        handleExtraction(result[STORAGE_KEY_REPORT_DATA]);
+        return;
+      }
+
+      // Legacy format support
       if (result.currentXml) {
         // XML is ready - display it
         clearInterval(pollInterval);
@@ -1129,13 +2277,17 @@ function showWaitingForDownload(filename) {
         document.body.style.paddingTop = '';
 
         try {
+          currentRawXml = result.currentXml;
           const report = parseDmarcReport(result.currentXml);
           displayReport(report);
           chrome.storage.local.remove(['currentXml', 'downloadComplete']);
         } catch (err) {
           showError(`Failed to parse report: ${err.message}`);
         }
-      } else if (result.downloadComplete) {
+        return;
+      }
+
+      if (result.downloadComplete) {
         // Download finished - prompt user to select file
         clearInterval(pollInterval);
         chrome.storage.local.remove(['downloadComplete']);
@@ -1167,22 +2319,35 @@ function showWaitingForDownload(filename) {
 }
 
 /**
- * Initialize viewer - check for stored XML data
+ * Initialize viewer - check for stored report data
+ * Handles both new format (ExtractionResult) and legacy format (raw XML string)
  */
 function initViewer() {
   if (typeof chrome !== 'undefined' && chrome.storage) {
-    chrome.storage.local.get(['currentXml'], (result) => {
+    // Check for new format first, then legacy
+    chrome.storage.local.get([STORAGE_KEY_REPORT_DATA, 'currentXml'], (result) => {
+      // New format: ExtractionResult with files array
+      if (result[STORAGE_KEY_REPORT_DATA]) {
+        const extraction = result[STORAGE_KEY_REPORT_DATA];
+        chrome.storage.local.remove([STORAGE_KEY_REPORT_DATA]);
+        handleExtraction(extraction);
+        return;
+      }
+
+      // Legacy format: raw XML string (backwards compatibility)
       if (result.currentXml) {
-        console.log('DMARC Viewer: Found XML in storage, displaying');
+        chrome.storage.local.remove(['currentXml']);
         try {
+          currentRawXml = result.currentXml;
           const report = parseDmarcReport(result.currentXml);
           displayReport(report);
-          chrome.storage.local.remove(['currentXml']);
         } catch (err) {
           showError(`Failed to parse report: ${err.message}`);
         }
+        return;
       }
-      // Otherwise just show the default drop zone - no action needed
+
+      // No stored data - show default drop zone (no action needed)
     });
   }
 }

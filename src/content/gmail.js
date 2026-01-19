@@ -5,6 +5,83 @@
 (function() {
   'use strict';
 
+  /**
+   * Send message to service worker with retry logic.
+   * Handles MV3 service worker lifecycle where the worker may be inactive.
+   * The first attempt wakes the worker; retry ensures delivery.
+   * @param {Object} message - Message to send
+   * @param {number} maxRetries - Maximum retry attempts (default 3)
+   * @param {number} timeoutMs - Response timeout in milliseconds (default 5000)
+   * @returns {Promise<Object>} Response from service worker
+   */
+  function sendMessageWithRetry(message, maxRetries = 3, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      let settled = false; // Prevent multiple settlements from race conditions
+
+      function attempt() {
+        if (settled) return; // Promise already settled by previous attempt
+        attempts++;
+        let attemptHandled = false;
+        let timeoutId = null;
+
+        // Set timeout for response
+        timeoutId = setTimeout(() => {
+          if (attemptHandled || settled) return;
+          attemptHandled = true;
+
+          if (attempts < maxRetries) {
+            console.log(`DMARC Reader: Message timeout, retry ${attempts}/${maxRetries}`);
+            setTimeout(attempt, 200 * attempts); // Exponential backoff
+          } else {
+            settled = true;
+            reject(new Error('Service worker did not respond after retries'));
+          }
+        }, timeoutMs);
+
+        try {
+          chrome.runtime.sendMessage(message, (response) => {
+            if (attemptHandled || settled) return;
+            attemptHandled = true;
+            clearTimeout(timeoutId);
+
+            // Check for runtime errors (service worker inactive, etc.)
+            if (chrome.runtime.lastError) {
+              const errMsg = chrome.runtime.lastError.message || 'Unknown error';
+              console.log(`DMARC Reader: sendMessage error: ${errMsg}`);
+
+              if (attempts < maxRetries) {
+                console.log(`DMARC Reader: Retrying (${attempts}/${maxRetries})...`);
+                setTimeout(attempt, 200 * attempts);
+              } else {
+                settled = true;
+                reject(new Error(errMsg));
+              }
+              return;
+            }
+
+            settled = true;
+            resolve(response);
+          });
+        } catch (err) {
+          if (attemptHandled || settled) return;
+          attemptHandled = true;
+          clearTimeout(timeoutId);
+
+          if (attempts < maxRetries) {
+            console.log(`DMARC Reader: Exception, retry ${attempts}/${maxRetries}:`, err.message);
+            setTimeout(attempt, 200 * attempts);
+          } else {
+            settled = true;
+            reject(err);
+          }
+        }
+      }
+
+      attempt();
+    });
+  }
+
   const DMARC_PATTERNS = [
     /dmarc/i,
     /[a-z0-9.-]+![a-z0-9.-]+!\d+!\d+/i,
@@ -157,16 +234,26 @@
       if (url) {
         const data = await fetchAttachment(url);
         if (data) {
-          chrome.runtime.sendMessage({
-            action: 'processAttachment',
-            data: Array.from(new Uint8Array(data)),
-            filename: filename
-          }, (response) => {
+          try {
+            const response = await sendMessageWithRetry({
+              action: 'processAttachment',
+              data: Array.from(new Uint8Array(data)),
+              filename: filename
+            });
             btn.innerHTML = svg;
             if (!response?.success) {
-              chrome.runtime.sendMessage({ action: 'openViewer' });
+              await sendMessageWithRetry({ action: 'openViewer' });
             }
-          });
+          } catch (err) {
+            console.error('DMARC Reader: Failed to process attachment:', err);
+            btn.innerHTML = svg;
+            // Try to open viewer anyway - user can drop file manually
+            try {
+              await sendMessageWithRetry({ action: 'openViewer' });
+            } catch (e) {
+              console.error('DMARC Reader: Failed to open viewer:', e);
+            }
+          }
           return;
         }
       }
@@ -193,7 +280,9 @@
 
       // Last resort: trigger download and open viewer
       triggerDownload(containerEl);
-      chrome.runtime.sendMessage({ action: 'openViewer' });
+      sendMessageWithRetry({ action: 'openViewer' }).catch(err => {
+        console.error('DMARC Reader: Failed to open viewer:', err);
+      });
     };
 
     return btn;
@@ -279,17 +368,24 @@
     const hash = window.location.hash;
     if (hash === '#inbox' || hash === '#sent' || !hash.includes('/')) return;
 
-    // Find button for this file and click it
-    const btn = document.querySelector(`.dmarc-viewer-btn[data-dmarc-file="${pendingFile}"]`);
-    if (btn) {
-      console.log('DMARC Reader: Auto-clicking button for', pendingFile);
-      sessionStorage.removeItem('dmarc_pending_file');
-      btn.click();
+    // Find button for this file using safe iteration (avoid selector injection)
+    const buttons = document.querySelectorAll('.dmarc-viewer-btn');
+    for (const btn of buttons) {
+      if (btn.dataset.dmarcFile === pendingFile) {
+        console.log('DMARC Reader: Auto-clicking button for', pendingFile);
+        sessionStorage.removeItem('dmarc_pending_file');
+        btn.click();
+        return;
+      }
     }
   }
 
   // Debounced observer
   let timeout;
+  let scanTimeout1;
+  let scanTimeout2;
+  let pendingFileTimeout;
+
   const observer = new MutationObserver(() => {
     clearTimeout(timeout);
     timeout = setTimeout(() => {
@@ -300,9 +396,18 @@
 
   observer.observe(document.body, { childList: true, subtree: true });
 
-  setTimeout(scan, 1500);
-  setTimeout(scan, 3500);
-  setTimeout(checkPendingFile, 2000);
+  scanTimeout1 = setTimeout(scan, 1500);
+  scanTimeout2 = setTimeout(scan, 3500);
+  pendingFileTimeout = setTimeout(checkPendingFile, 2000);
+
+  // Cleanup on page unload to prevent memory leaks
+  window.addEventListener('pagehide', () => {
+    observer.disconnect();
+    clearTimeout(timeout);
+    clearTimeout(scanTimeout1);
+    clearTimeout(scanTimeout2);
+    clearTimeout(pendingFileTimeout);
+  });
 
   console.log('DMARC Reader: Loaded');
 })();

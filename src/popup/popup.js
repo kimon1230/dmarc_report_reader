@@ -58,7 +58,7 @@ async function handleFile(file) {
       // Send to background script for processing
       chrome.runtime.sendMessage({
         action: 'processFile',
-        fileName: file.name,
+        filename: file.name,
         data: Array.from(new Uint8Array(data))
       }, (response) => {
         if (chrome.runtime.lastError) {

@@ -1,12 +1,94 @@
 /**
  * DMARC Report Reader - IP Lookup Service
  * Fetches geolocation and reverse DNS data for IP addresses using ip-api.com
+ *
+ * Features:
+ * - Session-persistent cache using chrome.storage.session
+ * - Batch API calls for efficiency
+ * - Rate limiting (45 req/min for ip-api.com free tier)
  */
 
 /**
- * Cache for IP lookup results to avoid redundant API calls
+ * In-memory cache for current session (fallback and fast access)
+ * @type {Map<string, Object>}
  */
 const ipCache = new Map();
+
+/**
+ * Storage key for session cache
+ * @constant {string}
+ */
+const IP_CACHE_STORAGE_KEY = 'ipLookupCache';
+
+/**
+ * Cache TTL in milliseconds (24 hours)
+ * @constant {number}
+ */
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Maximum cache entries to prevent storage quota issues
+ * @constant {number}
+ */
+const MAX_CACHE_ENTRIES = 5000;
+
+/**
+ * Load cache from chrome.storage.session into memory
+ * @returns {Promise<void>}
+ */
+async function loadCacheFromStorage() {
+  if (typeof chrome === 'undefined' || !chrome.storage?.session) {
+    return; // Not in extension context
+  }
+
+  try {
+    const result = await chrome.storage.session.get(IP_CACHE_STORAGE_KEY);
+    const stored = result[IP_CACHE_STORAGE_KEY];
+
+    if (stored && Array.isArray(stored)) {
+      const now = Date.now();
+      for (const [ip, entry] of stored) {
+        // Only load non-expired entries
+        if (entry.timestamp && (now - entry.timestamp) < CACHE_TTL_MS) {
+          ipCache.set(ip, entry.data);
+        }
+      }
+    }
+  } catch (err) {
+    // Silently fail - cache is just an optimization
+    console.warn('IP Lookup: Failed to load cache from storage:', err.message);
+  }
+}
+
+/**
+ * Save current cache to chrome.storage.session
+ * @returns {Promise<void>}
+ */
+async function saveCacheToStorage() {
+  if (typeof chrome === 'undefined' || !chrome.storage?.session) {
+    return;
+  }
+
+  try {
+    const entries = [];
+    const now = Date.now();
+
+    // Convert to array format with timestamps
+    for (const [ip, data] of ipCache.entries()) {
+      entries.push([ip, { data, timestamp: now }]);
+    }
+
+    // Limit size to prevent quota issues
+    const trimmed = entries.slice(-MAX_CACHE_ENTRIES);
+
+    await chrome.storage.session.set({ [IP_CACHE_STORAGE_KEY]: trimmed });
+  } catch (err) {
+    console.warn('IP Lookup: Failed to save cache to storage:', err.message);
+  }
+}
+
+// Initialize cache from storage on module load
+loadCacheFromStorage();
 
 /**
  * Country code to flag emoji mapping
@@ -34,7 +116,7 @@ async function lookupIp(ip) {
 
   try {
     const response = await fetch(
-      `http://ip-api.com/json/${ip}?fields=status,country,countryCode,city,isp,org,as,reverse`
+      `https://ip-api.com/json/${ip}?fields=status,country,countryCode,city,isp,org,as,reverse`
     );
 
     if (!response.ok) {
@@ -99,7 +181,7 @@ async function lookupIps(ips, onProgress) {
 
     try {
       const response = await fetch(
-        'http://ip-api.com/batch?fields=status,query,country,countryCode,city,isp,org,as,reverse',
+        'https://ip-api.com/batch?fields=status,query,country,countryCode,city,isp,org,as,reverse',
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -153,6 +235,9 @@ async function lookupIps(ips, onProgress) {
       await new Promise(resolve => setTimeout(resolve, 1500));
     }
   }
+
+  // Persist cache to session storage after lookups complete
+  saveCacheToStorage();
 
   return results;
 }

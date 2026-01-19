@@ -118,12 +118,32 @@ dot -Tpng docs/architecture.dot -o docs/architecture.png
 - [ ] ZIP archive loads correctly
 - [ ] Invalid files show error message
 
-#### Report Viewer
+#### Report Viewer - Basic
 - [ ] Report metadata displays correctly
 - [ ] Policy information shows
 - [ ] Records table populates
 - [ ] Pass/fail indicators are color-coded
 - [ ] IP geolocation loads (may take a moment)
+
+#### Report Viewer - Advanced Features
+- [ ] Multi-report ZIP shows selection modal
+- [ ] Combine all reports option works
+- [ ] Filter panel expands/collapses
+- [ ] Domain filter works (substring match)
+- [ ] IP filter works (prefix and CIDR)
+- [ ] Country filter dropdown populates
+- [ ] Hostname filter works
+- [ ] Min messages filter works
+- [ ] Filter badge shows active filter count
+- [ ] Clear filters resets all
+- [ ] Top-N analysis panels display
+- [ ] Raw XML modal opens and displays
+- [ ] Copy XML to clipboard works
+- [ ] Export JSON respects active filters
+- [ ] Export CSV respects active filters
+- [ ] Large report (50+ IPs) shows enrichment prompt
+- [ ] Skip enrichment works
+- [ ] Enrich later option works
 
 #### Webmail Integration - Gmail
 - [ ] Gmail: DMARC attachments detected in email view
@@ -137,6 +157,16 @@ dot -Tpng docs/architecture.dot -o docs/architecture.png
 - [ ] Outlook: DMARC attachments detected
 - [ ] Outlook: "View Report" button appears
 - [ ] Outlook: Clicking button processes attachment correctly
+
+#### Service Worker Resilience
+- [ ] Gmail: Leave tab idle for 10+ minutes, then click DMARC button
+- [ ] Button should still work (retry logic handles service worker wake-up)
+- [ ] Console shows retry messages if service worker was asleep
+
+#### Security Testing
+- [ ] XSS: Create XML with `<script>` in domain field - should be escaped
+- [ ] XSS: Create XML with HTML in identifiers - should render as text
+- [ ] Validation: Send malformed message to service worker - should reject
 
 ### Test Files
 

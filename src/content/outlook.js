@@ -8,6 +8,80 @@
 
   console.log('DMARC Report Reader: Outlook content script loading...');
 
+  /**
+   * Send message to service worker with retry logic.
+   * Handles MV3 service worker lifecycle where the worker may be inactive.
+   * @param {Object} message - Message to send
+   * @param {number} maxRetries - Maximum retry attempts
+   * @param {number} timeoutMs - Response timeout in milliseconds
+   * @returns {Promise<Object>} Response from service worker
+   */
+  function sendMessageWithRetry(message, maxRetries = 3, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      let settled = false; // Prevent multiple settlements from race conditions
+
+      function attempt() {
+        if (settled) return; // Promise already settled by previous attempt
+        attempts++;
+        let attemptHandled = false;
+        let timeoutId = null;
+
+        timeoutId = setTimeout(() => {
+          if (attemptHandled || settled) return;
+          attemptHandled = true;
+
+          if (attempts < maxRetries) {
+            console.log(`DMARC Reader: Message timeout, retry ${attempts}/${maxRetries}`);
+            setTimeout(attempt, 200 * attempts);
+          } else {
+            settled = true;
+            reject(new Error('Service worker did not respond after retries'));
+          }
+        }, timeoutMs);
+
+        try {
+          chrome.runtime.sendMessage(message, (response) => {
+            if (attemptHandled || settled) return;
+            attemptHandled = true;
+            clearTimeout(timeoutId);
+
+            if (chrome.runtime.lastError) {
+              const errMsg = chrome.runtime.lastError.message || 'Unknown error';
+              console.log(`DMARC Reader: sendMessage error: ${errMsg}`);
+
+              if (attempts < maxRetries) {
+                console.log(`DMARC Reader: Retrying (${attempts}/${maxRetries})...`);
+                setTimeout(attempt, 200 * attempts);
+              } else {
+                settled = true;
+                reject(new Error(errMsg));
+              }
+              return;
+            }
+
+            settled = true;
+            resolve(response);
+          });
+        } catch (err) {
+          if (attemptHandled || settled) return;
+          attemptHandled = true;
+          clearTimeout(timeoutId);
+
+          if (attempts < maxRetries) {
+            console.log(`DMARC Reader: Exception, retry ${attempts}/${maxRetries}:`, err.message);
+            setTimeout(attempt, 200 * attempts);
+          } else {
+            settled = true;
+            reject(err);
+          }
+        }
+      }
+
+      attempt();
+    });
+  }
+
   // File patterns that indicate DMARC reports
   const DMARC_PATTERNS = [
     /dmarc/i,
@@ -69,14 +143,18 @@
     button.onmouseover = () => button.style.background = '#106ebe';
     button.onmouseout = () => button.style.background = '#0078d4';
 
-    button.onclick = (e) => {
+    button.onclick = async (e) => {
       e.preventDefault();
       e.stopPropagation();
 
       // Open extension viewer with instructions
-      chrome.runtime.sendMessage({ action: 'openViewer' }, () => {
+      try {
+        await sendMessageWithRetry({ action: 'openViewer' });
         alert(`To view this DMARC report:\n\n1. Download "${filename}" from Outlook\n2. Drop the file into the viewer that just opened\n\n(Outlook doesn't allow extensions to directly access attachments)`);
-      });
+      } catch (err) {
+        console.error('DMARC Reader: Failed to open viewer:', err);
+        alert('Failed to open DMARC Viewer. Please try again or use the extension popup.');
+      }
     };
 
     return button;
@@ -149,17 +227,25 @@
    */
   function init() {
     // Initial scan after a delay (let Outlook load)
-    setTimeout(scanForAttachments, 1000);
+    const initialScanTimeout = setTimeout(scanForAttachments, 1000);
 
     // Watch for changes
+    let debounceTimeout;
     const observer = new MutationObserver(() => {
-      clearTimeout(init.timeout);
-      init.timeout = setTimeout(scanForAttachments, 500);
+      clearTimeout(debounceTimeout);
+      debounceTimeout = setTimeout(scanForAttachments, 500);
     });
 
     observer.observe(document.body, {
       childList: true,
       subtree: true
+    });
+
+    // Cleanup on page unload to prevent memory leaks
+    window.addEventListener('pagehide', () => {
+      observer.disconnect();
+      clearTimeout(initialScanTimeout);
+      clearTimeout(debounceTimeout);
     });
 
     console.log('DMARC Report Reader: Outlook observer initialized');

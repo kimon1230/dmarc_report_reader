@@ -17,6 +17,7 @@
           <input type="file" id="file-input" accept=".xml,.gz,.zip" hidden>
         </div>
         <div id="export-buttons" class="export-buttons hidden">
+          <button id="view-xml-btn" class="btn-export" title="View raw XML source">View XML</button>
           <button id="export-json" class="btn-export">Export JSON</button>
           <button id="export-csv" class="btn-export">Export CSV</button>
         </div>
@@ -29,6 +30,20 @@
     </div>
 
     <div id="error" class="error hidden"></div>
+
+    <!-- Enrichment Banner (for large reports) -->
+    <div id="enrichment-banner" class="enrichment-banner hidden">
+      <div class="enrichment-content">
+        <div class="enrichment-info">
+          <strong>Large Report Detected</strong>
+          <span id="enrichment-message">This report has many records. IP enrichment may be slow.</span>
+        </div>
+        <div class="enrichment-actions">
+          <button id="enrich-now-btn" class="btn-primary">Enrich IPs Now</button>
+          <button id="skip-enrichment-btn" class="btn-secondary">Skip Enrichment</button>
+        </div>
+      </div>
+    </div>
 
     <main id="report" class="report hidden">
       <!-- Summary Cards with Progress Bars -->
@@ -143,13 +158,57 @@
         </div>
       </section>
 
+      <!-- Analysis Section -->
+      <section class="section collapsible" id="analysis-section">
+        <h2 class="section-header">
+          <span>Analysis</span>
+          <button class="collapse-btn" aria-label="Toggle section">▼</button>
+        </h2>
+        <div class="section-content">
+          <div class="analysis-grid">
+            <div class="analysis-panel" id="top-senders-panel">
+              <h3>Top Sending IPs</h3>
+              <div class="analysis-list" id="top-senders-list">
+                <div class="analysis-loading">Loading geo data...</div>
+              </div>
+            </div>
+            <div class="analysis-panel" id="top-failures-panel">
+              <h3>Top Failing Domains</h3>
+              <div class="analysis-list" id="top-failures-list">
+                <div class="analysis-empty">No failures</div>
+              </div>
+            </div>
+            <div class="analysis-panel" id="top-countries-panel">
+              <h3>Top Countries</h3>
+              <div class="analysis-list" id="top-countries-list">
+                <div class="analysis-loading">Loading geo data...</div>
+              </div>
+            </div>
+            <div class="analysis-panel" id="top-asns-panel">
+              <h3>Top Networks (ASN)</h3>
+              <div class="analysis-list" id="top-asns-list">
+                <div class="analysis-loading">Loading geo data...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Records Table -->
       <section class="section">
         <div class="section-header-with-controls">
           <h2>Authentication Records</h2>
-          <div class="table-controls">
+          <button id="toggle-filters-btn" class="btn-filter-toggle" aria-expanded="false" aria-controls="advanced-filters">
+            <span class="filter-icon">&#9660;</span> Filters
+            <span id="active-filter-count" class="filter-badge hidden">0</span>
+          </button>
+        </div>
+
+        <!-- Advanced Filter Panel -->
+        <div id="advanced-filters" class="advanced-filters hidden">
+          <div class="filter-row">
             <div class="filter-group">
-              <label>Filter:</label>
+              <label for="filter-status">Status</label>
               <select id="filter-status">
                 <option value="all">All Records</option>
                 <option value="pass">Passed Only</option>
@@ -158,13 +217,42 @@
                 <option value="reject">Rejected</option>
               </select>
             </div>
-            <div class="sort-group">
-              <label>Sort by:</label>
+            <div class="filter-group">
+              <label for="filter-domain">Domain</label>
+              <input type="text" id="filter-domain" placeholder="e.g., example.com" autocomplete="off">
+            </div>
+            <div class="filter-group">
+              <label for="filter-ip">Source IP</label>
+              <input type="text" id="filter-ip" placeholder="e.g., 192.168.1 or CIDR" autocomplete="off">
+            </div>
+            <div class="filter-group">
+              <label for="filter-country">Country</label>
+              <select id="filter-country">
+                <option value="">All Countries</option>
+                <!-- Populated dynamically from data -->
+              </select>
+            </div>
+          </div>
+          <div class="filter-row">
+            <div class="filter-group">
+              <label for="filter-min-count">Min Messages</label>
+              <input type="number" id="filter-min-count" min="1" placeholder="1">
+            </div>
+            <div class="filter-group">
+              <label for="filter-hostname">Hostname</label>
+              <input type="text" id="filter-hostname" placeholder="e.g., google.com" autocomplete="off">
+            </div>
+            <div class="filter-group">
+              <label for="sort-by">Sort by</label>
               <select id="sort-by">
                 <option value="count-desc">Count (High to Low)</option>
                 <option value="count-asc">Count (Low to High)</option>
                 <option value="ip">IP Address</option>
               </select>
+            </div>
+            <div class="filter-group filter-actions">
+              <button id="apply-filters-btn" class="btn-primary btn-sm">Apply</button>
+              <button id="clear-filters-btn" class="btn-secondary btn-sm">Clear</button>
             </div>
           </div>
         </div>
@@ -194,6 +282,43 @@
     <footer class="footer">
       <p>DMARC Report Reader</p>
     </footer>
+  </div>
+
+  <!-- Report Selector Modal (for multi-file ZIPs) -->
+  <div id="report-selector-modal" class="modal hidden" role="dialog" aria-labelledby="modal-title" aria-modal="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content report-selector-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Multiple Reports Found</h2>
+        <button id="close-selector-modal" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-description">This ZIP file contains multiple DMARC reports. Select one to view, or combine all reports.</p>
+        <div id="report-list" class="report-list">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="combine-all-btn" class="btn-primary">Combine All Reports</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Raw XML Modal -->
+  <div id="xml-modal" class="modal hidden" role="dialog" aria-labelledby="xml-modal-title" aria-modal="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content xml-modal-content">
+      <div class="modal-header">
+        <h2 id="xml-modal-title">Raw DMARC XML</h2>
+        <div class="modal-header-actions">
+          <button id="copy-xml-btn" class="btn-secondary btn-sm">Copy to Clipboard</button>
+          <button id="close-xml-modal" class="modal-close" aria-label="Close">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body xml-modal-body">
+        <pre id="xml-content" class="xml-source"></pre>
+      </div>
+    </div>
   </div>
 
   <script src="../../lib/pako.min.js"></script>

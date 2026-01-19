@@ -170,9 +170,20 @@
 
       try {
         const buffer = await file.arrayBuffer();
-        const xml = await extractXmlFromFile(buffer, file.name);
-        log('File extraction successful');
+        const extraction = await extractXmlFromFile(buffer, file.name);
 
+        log(`File extraction successful (format: ${extraction.sourceFormat})`);
+        log(`Found ${extraction.files.length} XML file(s)`);
+
+        if (extraction.isMultiFile) {
+          log('Multi-file ZIP detected:');
+          extraction.files.forEach((f, i) => {
+            log(`  [${i + 1}] ${f.filename}`);
+          });
+        }
+
+        // Parse first (or only) file
+        const xml = extraction.files[0].xml;
         const report = parseDmarcReport(xml);
         log('Parsing successful');
         log(`Organization: ${report.metadata.orgName}`);
@@ -180,6 +191,23 @@
         log(`Records: ${report.records.length}`);
         log(`Total messages: ${report.summary.totalMessages}`);
         logJson(report);
+
+        // If multi-file, also show combined result
+        if (extraction.files.length > 1) {
+          log('--- Combined report ---');
+          let totalRecords = 0;
+          let totalMessages = 0;
+          for (const f of extraction.files) {
+            try {
+              const r = parseDmarcReport(f.xml);
+              totalRecords += r.records.length;
+              totalMessages += r.summary.totalMessages;
+            } catch (err) {
+              log(`Failed to parse ${f.filename}: ${err.message}`, false);
+            }
+          }
+          log(`Combined: ${totalRecords} records, ${totalMessages} messages`);
+        }
       } catch (err) {
         log('Processing failed: ' + err.message, false);
       }

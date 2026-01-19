@@ -40,7 +40,11 @@ DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processe
 |---------|------|-------------|
 | IP Lookup | `src/services/ip-lookup.js` | Fetches geolocation and reverse DNS for source IPs |
 
-**External API**: ip-api.com (free tier, 45 requests/minute, batch endpoint for efficiency)
+**External API**: ip-api.com (HTTPS, free tier, 45 requests/minute, batch endpoint for efficiency)
+
+**Session Caching**: IP lookup results are cached in `chrome.storage.session` with 24-hour TTL and 5000 entry limit. Cache persists across viewer sessions within the same browser session.
+
+**On-Demand Enrichment**: Reports with more than 50 unique IPs prompt the user to choose between enriching immediately or skipping (can enrich later).
 
 ### Output Layer
 
@@ -183,21 +187,38 @@ The parser calculates:
 - Quarantine/reject counts
 - Pass rate percentages
 
-### Filtering & Sorting
+### Advanced Filtering
 
 | Filter | Description |
 |--------|-------------|
-| All | Show all records |
-| Pass | Both DKIM and SPF passed |
-| Fail | Either DKIM or SPF failed |
-| Quarantine | Disposition = quarantine |
-| Reject | Disposition = reject |
+| Status | All / Pass / Fail / Quarantine / Reject |
+| Domain | Substring match on From header domain |
+| Source IP | Prefix match or CIDR notation (e.g., `192.168.1.0/24`) |
+| Country | Dropdown populated from report data |
+| Hostname | Substring match on reverse DNS |
+| Min Messages | Only show records with at least N messages |
 
 | Sort | Description |
 |------|-------------|
 | Count (High-Low) | Most messages first |
 | Count (Low-High) | Fewest messages first |
 | IP Address | Alphabetical by IP |
+
+### Top-N Analysis
+
+The viewer calculates and displays:
+- **Top Sending IPs**: Highest volume senders with location info
+- **Top Failing Domains**: Domains with the most authentication failures
+- **Top Countries**: Geographic distribution of senders
+- **Top Networks (ASN)**: ISPs and cloud providers by volume
+
+### Multi-Report ZIP Handling
+
+When a ZIP file contains multiple DMARC reports:
+1. File handler extracts all XML files
+2. Viewer shows a modal for report selection
+3. User can view individual reports or combine all
+4. Combined view aggregates records with deduplicated analysis
 
 ### Error Diagnosis
 
@@ -214,8 +235,9 @@ The viewer provides contextual diagnosis for:
 
 | Format | Contents |
 |--------|----------|
-| JSON | Full structured report with all fields |
-| CSV | Flat table with key fields for spreadsheet analysis |
+| JSON | Full structured report with all fields (respects active filters) |
+| CSV | Flat table with key fields for spreadsheet analysis (respects active filters) |
+| Raw XML | View and copy original XML source with syntax highlighting |
 
 ## DMARC Report Structure
 
@@ -334,9 +356,13 @@ The viewer provides contextual diagnosis for:
 1. **Content Security Policy**: Manifest V3 enforces strict CSP
 2. **Local Processing**: All file parsing happens client-side
 3. **Minimal Permissions**: Only requests necessary host permissions
-4. **External API**: Only IP addresses are sent to ip-api.com (no email content)
+4. **External API**: Only IP addresses are sent to ip-api.com over HTTPS (no email content)
 5. **No Data Storage**: Reports are processed in memory only, not persisted
 6. **Sandboxed Context**: Content scripts run in isolated worlds
+7. **XSS Prevention**: All user-controlled data (domains, IPs, hostnames) is escaped before HTML rendering
+8. **Message Validation**: Service worker validates sender origin and message payload structure
+9. **Input Validation**: File data is validated (size limits, byte value checks) before processing
+10. **Service Worker Retry**: Content scripts handle MV3 service worker lifecycle with retry logic
 
 ## Browser Compatibility
 
