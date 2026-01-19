@@ -56,3 +56,4 @@ Thumbs.db
 *.tmp
 *.temp
 *.bak
+dmarc-report-reader-*.zip
