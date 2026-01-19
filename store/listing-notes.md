@@ -19,7 +19,7 @@ Required for Gmail webmail integration. Content script detects DMARC report atta
 Required for Outlook Web integration (experimental). Same purpose as Gmail integration.
 
 ### host_permissions: ip-api.com
-Required for optional IP geolocation feature. Only IP addresses from DMARC reports are sent to this free service.
+Required for IP geolocation feature. Only IP addresses from DMARC reports are sent to this free service. For small reports (50 or fewer unique IPs), lookup runs automatically. For large reports, users are prompted and can skip.
 
 ## Remote Code Declaration
 None. All JavaScript is bundled locally. Third-party libraries (JSZip 3.10.1, pako 2.1.0) are vendored with SHA-384 integrity verification.
@@ -28,4 +28,4 @@ None. All JavaScript is bundled locally. Third-party libraries (JSZip 3.10.1, pa
 - No user data collection
 - No analytics or tracking
 - Local processing only
-- Optional IP geolocation sends only IP addresses
+- IP geolocation sends only IP addresses to ip-api.com (automatic for small reports, skippable for large reports)

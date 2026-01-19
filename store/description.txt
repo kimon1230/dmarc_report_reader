@@ -48,7 +48,7 @@ PRIVACY FIRST
 
 - All processing happens locally in your browser
 - Reports never leave your device
-- Only IP addresses sent for geolocation (optional)
+- IP geolocation sends only IP addresses (automatic for small reports, skippable for large reports)
 - No tracking, analytics, or data collection
 - Open source - review the code yourself
 
@@ -59,7 +59,7 @@ PERMISSIONS EXPLAINED
 - storage: Cache IP lookups in browser session
 - Gmail access: Detect DMARC attachments
 - Outlook access: Detect DMARC attachments (experimental)
-- ip-api.com: Optional IP geolocation
+- ip-api.com: IP geolocation (automatic for small reports, skippable for large reports)
 
 ---
 

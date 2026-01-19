@@ -128,16 +128,17 @@
     </ul>
 
     <h2>Local Processing</h2>
-    <p><strong>All report parsing happens locally in your browser.</strong> Your data never leaves your device except for optional IP geolocation.</p>
+    <p><strong>All report parsing happens locally in your browser.</strong> Your data never leaves your device except for IP geolocation lookups.</p>
 
     <h2>External Services</h2>
     <h3>IP Geolocation (ip-api.com)</h3>
-    <p>When you enable IP enrichment:</p>
+    <p>The extension looks up geographic location and ISP information for IP addresses found in DMARC reports:</p>
     <ul>
+        <li><strong>Small reports (50 or fewer unique IPs):</strong> Lookup runs automatically</li>
+        <li><strong>Large reports (more than 50 unique IPs):</strong> You are prompted and can choose to skip</li>
         <li><strong>Sent:</strong> Only IP addresses from reports</li>
         <li><strong>Not sent:</strong> Domains, emails, message counts, auth results</li>
         <li><strong>Protocol:</strong> HTTPS only</li>
-        <li><strong>Optional:</strong> You can skip enrichment for any report</li>
     </ul>
 
     <h2>Browser Storage</h2>
@@ -167,7 +168,7 @@
             </tr>
             <tr>
                 <td>ip-api.com</td>
-                <td>Optional IP geolocation</td>
+                <td>IP geolocation (automatic for small reports, opt-in for large reports)</td>
             </tr>
         </tbody>
     </table>
@@ -189,7 +190,7 @@
     <hr>
 
     <div class="summary">
-        <strong>Summary:</strong> All processing is local. We collect nothing. Optional IP lookups send only IP addresses.
+        <strong>Summary:</strong> All processing is local. We collect nothing. IP lookups send only IP addresses to ip-api.com (automatic for small reports, skippable for large reports).
     </div>
 </body>
 </html>

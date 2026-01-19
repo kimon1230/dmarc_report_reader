@@ -24,17 +24,19 @@ The extension processes DMARC report files you provide via:
 
 ## Local Processing
 
-**All report parsing happens locally in your browser.** Your data never leaves your device except for optional IP geolocation.
+**All report parsing happens locally in your browser.** Your data never leaves your device except for IP geolocation lookups.
 
 ## External Services
 
 ### IP Geolocation (ip-api.com)
 
-When you enable IP enrichment:
+The extension looks up geographic location and ISP information for IP addresses found in DMARC reports:
+
+- **Small reports (50 or fewer unique IPs):** Lookup runs automatically
+- **Large reports (more than 50 unique IPs):** You are prompted and can choose to skip
 - **Sent:** Only IP addresses from reports
 - **Not sent:** Domains, emails, message counts, auth results
 - **Protocol:** HTTPS only
-- **Optional:** You can skip enrichment for any report
 
 ## Browser Storage
 
@@ -49,7 +51,7 @@ When you enable IP enrichment:
 |------------|---------|
 | `storage` | Session cache for IP lookups |
 | Gmail/Outlook access | Detect DMARC attachments |
-| ip-api.com | Optional IP geolocation |
+| ip-api.com | IP geolocation (automatic for small reports, opt-in for large reports) |
 
 ## Security
 
@@ -68,4 +70,4 @@ Questions: https://github.com/kimon1230/dmarc_report_reader/issues
 
 ---
 
-**Summary:** All processing is local. We collect nothing. Optional IP lookups send only IP addresses.
+**Summary:** All processing is local. We collect nothing. IP lookups send only IP addresses to ip-api.com (automatic for small reports, skippable for large reports).
