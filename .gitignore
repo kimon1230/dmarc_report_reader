@@ -45,8 +45,9 @@ Thumbs.db
 /*.xml
 /*.xml.gz
 
-# But keep test fixtures
+# But keep test fixtures (including ZIP files for integration tests)
 !tests/fixtures/
+!tests/fixtures/*.zip
 
 # Logs
 *.log
