@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - DMARC Report Reader</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --text-color: #1f2937;
+            --text-light: #6b7280;
+            --bg-color: #ffffff;
+            --border-color: #e5e7eb;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            background: var(--bg-color);
+            padding: 2rem;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+            font-size: 2rem;
+        }
+        h2 {
+            color: var(--text-color);
+            margin-top: 2rem;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+        h3 {
+            color: var(--text-color);
+            margin-top: 1.5rem;
+            margin-bottom: 0.5rem;
+            font-size: 1.1rem;
+        }
+        p {
+            margin-bottom: 1rem;
+        }
+        .meta {
+            color: var(--text-light);
+            margin-bottom: 2rem;
+        }
+        ul {
+            margin-bottom: 1rem;
+            padding-left: 1.5rem;
+        }
+        li {
+            margin-bottom: 0.5rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        th, td {
+            text-align: left;
+            padding: 0.75rem;
+            border: 1px solid var(--border-color);
+        }
+        th {
+            background: #f9fafb;
+            font-weight: 600;
+        }
+        a {
+            color: var(--primary-color);
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .summary {
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 2rem;
+        }
+        .summary strong {
+            color: var(--primary-color);
+        }
+        strong {
+            font-weight: 600;
+        }
+        hr {
+            border: none;
+            border-top: 1px solid var(--border-color);
+            margin: 2rem 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Privacy Policy for DMARC Report Reader</h1>
+    <p class="meta">
+        <strong>Effective Date:</strong> January 2026<br>
+        <strong>Last Updated:</strong> January 2026
+    </p>
+
+    <h2>Overview</h2>
+    <p>DMARC Report Reader is a browser extension that reads and visualizes DMARC aggregate reports. This policy explains how we handle your data.</p>
+
+    <h2>Data We Process</h2>
+    <p>The extension processes DMARC report files you provide via:</p>
+    <ul>
+        <li>Drag and drop</li>
+        <li>File picker</li>
+        <li>Gmail/Outlook attachment detection</li>
+    </ul>
+
+    <h2>Data We Do NOT Collect</h2>
+    <ul>
+        <li>We do not collect your DMARC reports</li>
+        <li>We do not track browsing activity</li>
+        <li>We do not use analytics</li>
+        <li>We do not collect personal information</li>
+        <li>We do not store email content</li>
+    </ul>
+
+    <h2>Local Processing</h2>
+    <p><strong>All report parsing happens locally in your browser.</strong> Your data never leaves your device except for optional IP geolocation.</p>
+
+    <h2>External Services</h2>
+    <h3>IP Geolocation (ip-api.com)</h3>
+    <p>When you enable IP enrichment:</p>
+    <ul>
+        <li><strong>Sent:</strong> Only IP addresses from reports</li>
+        <li><strong>Not sent:</strong> Domains, emails, message counts, auth results</li>
+        <li><strong>Protocol:</strong> HTTPS only</li>
+        <li><strong>Optional:</strong> You can skip enrichment for any report</li>
+    </ul>
+
+    <h2>Browser Storage</h2>
+    <ul>
+        <li>IP lookup results cached in session storage</li>
+        <li>Cleared when browser closes</li>
+        <li>Never transmitted externally</li>
+        <li>No persistent storage of reports</li>
+    </ul>
+
+    <h2>Permissions</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Permission</th>
+                <th>Purpose</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>storage</code></td>
+                <td>Session cache for IP lookups</td>
+            </tr>
+            <tr>
+                <td>Gmail/Outlook access</td>
+                <td>Detect DMARC attachments</td>
+            </tr>
+            <tr>
+                <td>ip-api.com</td>
+                <td>Optional IP geolocation</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>Security</h2>
+    <ul>
+        <li>HTTPS for all external communication</li>
+        <li>Content Security Policy via Manifest V3</li>
+        <li>XSS protection through input sanitization</li>
+        <li>Message origin validation</li>
+    </ul>
+
+    <h2>Open Source</h2>
+    <p>Source code available at: <a href="https://github.com/kimon1230/dmarc_report_reader">https://github.com/kimon1230/dmarc_report_reader</a></p>
+
+    <h2>Contact</h2>
+    <p>Questions: <a href="https://github.com/kimon1230/dmarc_report_reader/issues">https://github.com/kimon1230/dmarc_report_reader/issues</a></p>
+
+    <hr>
+
+    <div class="summary">
+        <strong>Summary:</strong> All processing is local. We collect nothing. Optional IP lookups send only IP addresses.
+    </div>
+</body>
+</html>

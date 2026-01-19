@@ -1,0 +1,1 @@
+Read and visualize DMARC aggregate reports locally. Gmail integration, IP geolocation, and export options.

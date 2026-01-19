@@ -1,0 +1,79 @@
+DMARC Report Reader - Understand Your Email Authentication
+
+Analyze DMARC aggregate reports directly in your browser. No uploads, no servers, complete privacy.
+
+---
+
+WHAT IS DMARC?
+
+DMARC protects your domain from email spoofing. Email providers send aggregate reports showing who sends email using your domain and whether it passes authentication. These XML reports are hard to read-this extension makes them clear.
+
+---
+
+KEY FEATURES
+
+> Multiple Formats
+  - Plain XML, GZIP compressed, ZIP archives
+  - Multi-report ZIP files supported
+
+> Gmail Integration
+  - Automatic attachment detection
+  - One-click viewing from inbox
+  - No manual downloads needed
+
+> Comprehensive Analysis
+  - Summary dashboard with pass/fail rates
+  - Records table with advanced filtering
+  - Top senders, failures, countries, networks
+  - Enforcement readiness assessment
+
+> Smart Classification
+  - Distinguishes spoofing from misconfiguration
+  - Provider fingerprinting (Google, Microsoft, SendGrid, etc.)
+  - Disposition override explanations
+
+> IP Enrichment
+  - Geographic location lookup
+  - Reverse DNS and ISP identification
+  - Session caching for performance
+
+> Export Options
+  - JSON (structured data)
+  - CSV (spreadsheet compatible)
+  - Raw XML with syntax highlighting
+
+---
+
+PRIVACY FIRST
+
+- All processing happens locally in your browser
+- Reports never leave your device
+- Only IP addresses sent for geolocation (optional)
+- No tracking, analytics, or data collection
+- Open source - review the code yourself
+
+---
+
+PERMISSIONS EXPLAINED
+
+- storage: Cache IP lookups in browser session
+- Gmail access: Detect DMARC attachments
+- Outlook access: Detect DMARC attachments (experimental)
+- ip-api.com: Optional IP geolocation
+
+---
+
+IDEAL FOR
+
+- Domain administrators monitoring email authentication
+- Security teams investigating spoofing attempts
+- IT professionals managing email infrastructure
+- Anyone receiving DMARC aggregate reports
+
+---
+
+OPEN SOURCE
+
+100% open source under MIT License. Contributions welcome.
+
+Note: Outlook Web integration is experimental.

@@ -1,10 +1,12 @@
 {
   "manifest_version": 3,
   "name": "DMARC Report Reader",
+  "short_name": "DMARC Reader",
   "version": "1.0.0",
   "description": "Read and visualize DMARC aggregate reports from XML, ZIP, or GZIP files. Gmail integration supported; Outlook Web is experimental.",
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
@@ -12,6 +14,7 @@
     "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
       "48": "icons/icon48.png"
     },
     "default_title": "DMARC Report Reader"
