@@ -15,16 +15,18 @@ dmarc_report_reader/
 │   ├── background/
 │   │   └── service-worker.js  # Background service worker
 │   ├── content/
-│   │   ├── gmail.js           # Gmail content script
+│   │   ├── gmail.js           # Gmail content script (with retry UX)
 │   │   └── outlook.js         # Outlook Web content script
 │   ├── parser/
 │   │   ├── file-handler.js    # Format detection and extraction
-│   │   └── dmarc-parser.js    # XML to JSON parsing
+│   │   ├── dmarc-parser.js    # XML to JSON parsing, alignment engine
+│   │   └── classification.js  # Spoof vs misconfiguration heuristics
 │   ├── services/
-│   │   └── ip-lookup.js       # IP geolocation service
+│   │   ├── ip-lookup.js       # IP geolocation service
+│   │   └── provider-fingerprint.js  # ESP/provider detection
 │   ├── viewer/
 │   │   ├── viewer.html        # Report viewer page
-│   │   ├── viewer.js          # Viewer logic
+│   │   ├── viewer.js          # Viewer logic, enforcement readiness
 │   │   └── viewer.css         # Viewer styles
 │   └── popup/
 │       ├── popup.html         # Extension popup
@@ -37,6 +39,9 @@ dmarc_report_reader/
 │   ├── icon16.png
 │   ├── icon48.png
 │   └── icon128.png
+├── tests/
+│   ├── test-parser.html       # Browser-based parser tests
+│   └── test-logic.js          # Node.js CLI tests (67 tests)
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── architecture.dot       # Graphviz source
@@ -103,6 +108,24 @@ dot -Tpng docs/architecture.dot -o docs/architecture.png
 
 ## Testing
 
+### Automated Tests
+
+Run the Node.js test suite (67 tests covering core logic):
+
+```bash
+node tests/test-logic.js
+```
+
+This tests:
+- Organizational domain extraction
+- DMARC alignment computation
+- Classification heuristics
+- Provider fingerprinting
+- Enforcement readiness calculation
+- Robustness signals
+- Disposition override logic
+- Debug mode
+
 ### Manual Testing Checklist
 
 #### Popup UI
@@ -133,6 +156,8 @@ dot -Tpng docs/architecture.dot -o docs/architecture.png
 - [ ] IP filter works (prefix and CIDR)
 - [ ] Country filter dropdown populates
 - [ ] Hostname filter works
+- [ ] Provider filter dropdown populates
+- [ ] Classification filter works
 - [ ] Min messages filter works
 - [ ] Filter badge shows active filter count
 - [ ] Clear filters resets all
@@ -144,6 +169,16 @@ dot -Tpng docs/architecture.dot -o docs/architecture.png
 - [ ] Large report (50+ IPs) shows enrichment prompt
 - [ ] Skip enrichment works
 - [ ] Enrich later option works
+
+#### Report Viewer - Analytics Features
+- [ ] Enforcement Readiness panel displays
+- [ ] Alignment percentage gauge shows correctly
+- [ ] Status badge shows Safe/Caution/Not Ready
+- [ ] Recommendation text is policy-aware
+- [ ] Classification column shows in records table
+- [ ] Provider column shows detected ESPs
+- [ ] Disposition override explanation appears when applicable
+- [ ] Debug mode activates via localStorage (dmarcDebugMode=true)
 
 #### Webmail Integration - Gmail
 - [ ] Gmail: DMARC attachments detected in email view

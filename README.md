@@ -8,13 +8,17 @@ A Chrome/Edge browser extension that reads and visualizes DMARC (Domain-based Me
 - **Multi-Report ZIP Support**: Automatically detects ZIPs with multiple DMARC reports and offers report selection or combination
 - **Drag and Drop**: Simply drop a DMARC report file onto the viewer
 - **IP Geolocation**: Shows country, city, hostname (reverse DNS), ISP, and ASN for source IPs
+- **Provider Fingerprinting**: Identifies email service providers (Google, Microsoft, SendGrid, etc.) from IP data
 - **Webmail Integration**: Detects DMARC attachments in Gmail and Outlook Web
 - **Clear Visualization**: Color-coded pass/fail indicators with row highlighting
-- **Advanced Filtering**: Filter by status, domain, IP/CIDR, country, hostname, and message count
+- **Advanced Filtering**: Filter by status, domain, IP/CIDR, country, hostname, provider, classification, and message count
 - **Top-N Analysis**: See top sending IPs, failing domains, countries, and networks at a glance
 - **Raw XML Viewer**: View and copy the original XML source with syntax highlighting
 - **Export**: Export reports as JSON or CSV (respects active filters)
 - **Error Diagnosis**: Contextual explanations and recommendations for authentication failures
+- **Spoof vs Misconfiguration Classification**: Heuristic analysis to identify likely spoofing attempts vs legitimate senders with configuration issues
+- **Enforcement Readiness Panel**: Safety assessment for DMARC policy transitions (none → quarantine → reject)
+- **Disposition Override Explanation**: Explains when receivers override your DMARC policy (forwarding, mailing lists, etc.)
 - **On-Demand Enrichment**: For large reports, IP enrichment is optional to save time
 - **Session Caching**: IP lookup results persist within browser session
 
@@ -152,6 +156,30 @@ The extension provides detailed explanations for common issues:
 - Header From vs Envelope From mismatch
 - DKIM signing domain not aligned
 - SPF checked domain not aligned
+
+### Disposition Overrides
+- Forwarded mail (SPF breaks on forwarding)
+- Mailing list modifications
+- Receiver local policy overrides
+- Sampling (pct < 100)
+
+## Enforcement Readiness
+
+The Enforcement Readiness panel helps you safely transition your DMARC policy:
+
+| Status | Alignment | Recommendation |
+|--------|-----------|----------------|
+| **Safe** | 98%+ | Ready to move to stricter policy |
+| **Caution** | 90-98% | Review failing sources before proceeding |
+| **Not Ready** | <90% | Fix configuration issues before enforcement |
+
+## Classification
+
+Records are classified to help distinguish between:
+
+- **Likely Spoof**: Suspicious patterns (both auth fail, high volume, unknown sender)
+- **Likely Misconfiguration**: Legitimate sender patterns (known ESP, partial auth, single message)
+- **Unknown**: Insufficient signals for classification
 
 ## Development
 

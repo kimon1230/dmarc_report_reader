@@ -25,7 +25,9 @@ DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processe
 |-----------|------|-------------|
 | Service Worker | `src/background/service-worker.js` | Central message hub, orchestrates processing |
 | File Handler | `src/parser/file-handler.js` | Detects file format, extracts XML content |
-| DMARC Parser | `src/parser/dmarc-parser.js` | Parses DMARC XML into structured JSON with statistics |
+| DMARC Parser | `src/parser/dmarc-parser.js` | Parses DMARC XML into structured JSON with statistics and alignment analysis |
+| Classification | `src/parser/classification.js` | Heuristic analysis to distinguish spoofing vs misconfiguration |
+| Provider Fingerprint | `src/services/provider-fingerprint.js` | Identifies email service providers from IP data (ASN, hostname, org) |
 
 ### External Libraries
 
@@ -39,6 +41,7 @@ DMARC Report Reader is a Manifest V3 Chrome/Edge browser extension that processe
 | Service | File | Description |
 |---------|------|-------------|
 | IP Lookup | `src/services/ip-lookup.js` | Fetches geolocation and reverse DNS for source IPs |
+| Provider Fingerprint | `src/services/provider-fingerprint.js` | Identifies ESPs (Google, Microsoft, SendGrid, etc.) from IP enrichment data |
 
 **External API**: ip-api.com (HTTPS, free tier, 45 requests/minute, batch endpoint for efficiency)
 
@@ -76,17 +79,27 @@ Input File (XML/ZIP/GZ)
     │        │
     ▼        ▼
    ┌──────────────┐
-   │ DMARC Parser │ ─── XML → Structured JSON + Statistics
+   │ DMARC Parser │ ─── XML → Structured JSON + Alignment Analysis
    └──────────────┘
          │
          ▼
    ┌─────────────┐
-   │ IP Lookup   │ ─── Enrich with geolocation & hostname
+   │ IP Lookup   │ ─── Enrich with geolocation, hostname, ASN, org
    └─────────────┘
          │
          ▼
+   ┌───────────────────┐
+   │ Provider Fingerprint │ ─── Identify ESPs from enrichment data
+   └───────────────────┘
+         │
+         ▼
+   ┌────────────────┐
+   │ Classification │ ─── Spoof vs misconfiguration heuristics
+   └────────────────┘
+         │
+         ▼
    ┌─────────────┐
-   │ Viewer      │ ─── Render, filter, diagnose, export
+   │ Viewer      │ ─── Render, filter, diagnose, analyze, export
    └─────────────┘
 ```
 
@@ -196,6 +209,8 @@ The parser calculates:
 | Source IP | Prefix match or CIDR notation (e.g., `192.168.1.0/24`) |
 | Country | Dropdown populated from report data |
 | Hostname | Substring match on reverse DNS |
+| Provider | Dropdown of detected ESPs (Google, Microsoft, SendGrid, etc.) |
+| Classification | Likely Spoof / Likely Misconfiguration / Unknown |
 | Min Messages | Only show records with at least N messages |
 
 | Sort | Description |
@@ -230,6 +245,57 @@ The viewer provides contextual diagnosis for:
 | SPF Failures | Unauthorized IP, soft fail, no record, lookup limit |
 | Alignment | Header/envelope From mismatch, domain not aligned |
 | Disposition | Explains impact of quarantine/reject |
+
+### Analytics Features
+
+#### Enforcement Readiness Panel
+
+Analyzes report data to recommend DMARC policy transitions:
+
+| Status | Alignment Rate | Recommendation |
+|--------|----------------|----------------|
+| Safe | ≥98% | Ready to move to stricter policy |
+| Caution | 90-98% | Review failing sources before proceeding |
+| Not Ready | <90% | Fix configuration issues before enforcement |
+
+The panel is policy-aware, suggesting appropriate next steps based on current policy (none → quarantine → reject).
+
+#### Classification Engine
+
+Heuristic analysis distinguishes between:
+
+| Classification | Signals |
+|----------------|---------|
+| Likely Spoof | Both auth fail, high volume, unknown sender, no legitimate ESP |
+| Likely Misconfiguration | Known ESP, partial auth (DKIM or SPF pass), single message, aligned domain |
+| Unknown | Insufficient signals for classification |
+
+Robustness signals indicate confidence level based on number of matching heuristics.
+
+#### Provider Fingerprinting
+
+Identifies email service providers from IP enrichment data:
+
+| Match Type | Source |
+|------------|--------|
+| ASN Match | AS number patterns (e.g., AS15169 → Google) |
+| Hostname Match | Reverse DNS patterns (e.g., *.google.com) |
+| Org Match | Organization name patterns (e.g., "Google LLC") |
+
+Supported providers: Google, Microsoft, Amazon SES, SendGrid, Mailchimp, Mailgun, Postmark, SparkPost, Salesforce, Zendesk, Freshdesk, Mimecast, Proofpoint, Barracuda, and more.
+
+#### Disposition Override Explanation
+
+When receivers override DMARC policy, explains the reason:
+
+| Override Type | Explanation |
+|---------------|-------------|
+| `forwarded` | Mail was forwarded (SPF breaks on forwarding) |
+| `mailing_list` | Mailing list modified the message |
+| `local_policy` | Receiver applied local policy override |
+| `sampled_out` | Receiver sampled (pct < 100) |
+| `trusted_forwarder` | Known trusted forwarder |
+| `other` | Other receiver-specific reason |
 
 ### Export Formats
 
@@ -304,8 +370,8 @@ The viewer provides contextual diagnosis for:
   },
   policy: {
     domain: "example.com",
-    adkim: "relaxed",
-    aspf: "relaxed",
+    adkim: "relaxed",    // 'r' or 's' (relaxed/strict)
+    aspf: "relaxed",     // 'r' or 's' (relaxed/strict)
     policy: "quarantine",
     subdomainPolicy: "quarantine",
     percentage: 100
@@ -318,7 +384,7 @@ The viewer provides contextual diagnosis for:
         disposition: "none",
         dkim: "pass",
         spf: "pass",
-        reasons: []
+        reasons: [{ type: "forwarded", comment: "..." }]  // Disposition override
       },
       identifiers: {
         headerFrom: "example.com",
@@ -329,8 +395,26 @@ The viewer provides contextual diagnosis for:
         dkim: [{ domain, selector, result }],
         spf: [{ domain, scope, result }]
       },
+      // Alignment analysis (computed by parser)
       alignment: {
-        headerEnvelopeMismatch: false
+        dkimAligned: true,         // DKIM domain aligns with header_from
+        spfAligned: true,          // SPF domain aligns with header_from
+        dkimPassed: true,          // At least one DKIM auth passed
+        spfPassed: true,           // SPF auth passed
+        overallAligned: true,      // DMARC alignment requirement met
+        headerEnvelopeMismatch: false,
+        primaryFailureReason: null // "no_dkim_aligned", "spf_not_aligned", etc.
+      },
+      // Classification (computed post-enrichment)
+      classification: {
+        label: "Likely Misconfiguration",  // or "Likely Spoof", "Unknown"
+        signals: ["known_esp", "partial_auth", "aligned_domain"],
+        robustness: "high"         // "high", "medium", "low"
+      },
+      // Provider info (computed from IP enrichment)
+      provider: {
+        name: "Google",
+        matchType: "asn"           // "asn", "hostname", "org"
       }
     }
   ],
@@ -362,7 +446,7 @@ The viewer provides contextual diagnosis for:
 7. **XSS Prevention**: All user-controlled data (domains, IPs, hostnames) is escaped before HTML rendering
 8. **Message Validation**: Service worker validates sender origin and message payload structure
 9. **Input Validation**: File data is validated (size limits, byte value checks) before processing
-10. **Service Worker Retry**: Content scripts handle MV3 service worker lifecycle with retry logic
+10. **Service Worker Retry**: Content scripts handle MV3 service worker lifecycle with retry logic and visual feedback (connecting/processing/success/error states)
 
 ## Browser Compatibility
 

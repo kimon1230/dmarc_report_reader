@@ -29,7 +29,8 @@ digraph DMARCReportReader {
 
         service_worker [label="Service Worker\n(service-worker.js)"];
         file_handler [label="File Handler\n(file-handler.js)\nFormat Detection"];
-        dmarc_parser [label="DMARC Parser\n(dmarc-parser.js)\nXML → JSON"];
+        dmarc_parser [label="DMARC Parser\n(dmarc-parser.js)\nXML → JSON + Alignment"];
+        classification [label="Classification\n(classification.js)\nSpoof vs Misconfig"];
     }
 
     subgraph cluster_libraries {
@@ -50,6 +51,7 @@ digraph DMARCReportReader {
 
         ip_lookup [label="IP Lookup\n(ip-lookup.js)"];
         ip_api [label="ip-api.com\n(External API)"];
+        provider_fingerprint [label="Provider Fingerprint\n(provider-fingerprint.js)\nESP Detection"];
     }
 
     subgraph cluster_output {
@@ -75,10 +77,12 @@ digraph DMARCReportReader {
     jszip -> dmarc_parser [label="Extracted XML"];
     pako -> dmarc_parser [label="Decompressed XML"];
 
-    dmarc_parser -> viewer [label="Parsed report\n(JSON)"];
+    dmarc_parser -> viewer [label="Parsed report\n(JSON + Alignment)"];
 
     viewer -> ip_lookup [label="Source IPs"];
     ip_lookup -> ip_api [label="HTTP request", style=dashed];
     ip_api -> ip_lookup [label="Geo data", style=dashed];
-    ip_lookup -> viewer [label="IP metadata"];
+    ip_lookup -> provider_fingerprint [label="IP metadata"];
+    provider_fingerprint -> classification [label="Provider info"];
+    classification -> viewer [label="Enriched records\n(Provider + Class)"];
 }
