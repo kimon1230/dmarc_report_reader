@@ -158,6 +158,59 @@
         </div>
       </section>
 
+      <!-- Enforcement Readiness Panel -->
+      <section class="section collapsible" id="enforcement-section">
+        <h2 class="section-header">
+          <span>Enforcement Readiness</span>
+          <button class="collapse-btn" aria-label="Toggle section">▼</button>
+        </h2>
+        <div class="section-content">
+          <div class="enforcement-panel">
+            <div class="enforcement-summary">
+              <div class="enforcement-gauge">
+                <div class="gauge-ring" id="enforcement-gauge-ring">
+                  <span class="gauge-value" id="enforcement-gauge-value">--%</span>
+                </div>
+                <div class="gauge-label">DMARC Aligned</div>
+              </div>
+              <div class="enforcement-status">
+                <div class="status-badge" id="enforcement-status-badge">
+                  <span class="status-icon" id="enforcement-status-icon"></span>
+                  <span class="status-text" id="enforcement-status-text">Calculating...</span>
+                </div>
+                <div class="current-policy" id="enforcement-current-policy">
+                  Current Policy: <strong>-</strong>
+                </div>
+              </div>
+            </div>
+            <div class="enforcement-details">
+              <div class="enforcement-metrics">
+                <div class="metric-item">
+                  <span class="metric-value" id="enforcement-total-messages">0</span>
+                  <span class="metric-label">Total Messages</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-value" id="enforcement-aligned-messages">0</span>
+                  <span class="metric-label">Aligned (DMARC Pass)</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-value" id="enforcement-failing-sources">0</span>
+                  <span class="metric-label">Failing Sources</span>
+                </div>
+                <div class="metric-item">
+                  <span class="metric-value" id="enforcement-failing-volume">0</span>
+                  <span class="metric-label">Failing Messages</span>
+                </div>
+              </div>
+              <div class="enforcement-recommendation" id="enforcement-recommendation">
+                <h4>Recommendation</h4>
+                <p id="enforcement-recommendation-text">Loading...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Analysis Section -->
       <section class="section collapsible" id="analysis-section">
         <h2 class="section-header">
@@ -243,6 +296,22 @@
               <input type="text" id="filter-hostname" placeholder="e.g., google.com" autocomplete="off">
             </div>
             <div class="filter-group">
+              <label for="filter-classification">Classification</label>
+              <select id="filter-classification">
+                <option value="">All</option>
+                <option value="likely_spoof">Likely Spoof</option>
+                <option value="likely_legit_misconfig">Likely Misconfig</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="filter-provider">Provider</label>
+              <select id="filter-provider">
+                <option value="">All Providers</option>
+                <!-- Populated dynamically from data -->
+              </select>
+            </div>
+            <div class="filter-group">
               <label for="sort-by">Sort by</label>
               <select id="sort-by">
                 <option value="count-desc">Count (High to Low)</option>
@@ -263,9 +332,11 @@
                 <th>Source IP</th>
                 <th>Hostname</th>
                 <th>Location</th>
+                <th>Provider</th>
                 <th>From Domain</th>
                 <th>Count</th>
                 <th>Disposition</th>
+                <th>Classification</th>
                 <th>DKIM</th>
                 <th>SPF</th>
                 <th>Details</th>
@@ -325,7 +396,9 @@
   <script src="../../lib/jszip.min.js"></script>
   <script src="../parser/file-handler.js"></script>
   <script src="../parser/dmarc-parser.js"></script>
+  <script src="../parser/classification.js"></script>
   <script src="../services/ip-lookup.js"></script>
+  <script src="../services/provider-fingerprint.js"></script>
   <script src="viewer.js"></script>
 </body>
 </html>

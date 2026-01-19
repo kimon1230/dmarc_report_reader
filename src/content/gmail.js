@@ -10,29 +10,37 @@
    * Handles MV3 service worker lifecycle where the worker may be inactive.
    * The first attempt wakes the worker; retry ensures delivery.
    * @param {Object} message - Message to send
-   * @param {number} maxRetries - Maximum retry attempts (default 3)
-   * @param {number} timeoutMs - Response timeout in milliseconds (default 5000)
+   * @param {Object} options - Retry options
+   * @param {number} options.maxRetries - Maximum retry attempts (default 3)
+   * @param {Function} options.onRetry - Callback when retrying (receives attempt number)
    * @returns {Promise<Object>} Response from service worker
    */
-  function sendMessageWithRetry(message, maxRetries = 3, timeoutMs = 5000) {
+  function sendMessageWithRetry(message, options = {}) {
+    const maxRetries = options.maxRetries || 3;
+    const onRetry = options.onRetry || (() => {});
+
     return new Promise((resolve, reject) => {
       let attempts = 0;
-      let settled = false; // Prevent multiple settlements from race conditions
+      let settled = false;
 
       function attempt() {
-        if (settled) return; // Promise already settled by previous attempt
+        if (settled) return;
         attempts++;
         let attemptHandled = false;
         let timeoutId = null;
 
-        // Set timeout for response
+        // First attempt: short timeout (just wake the worker)
+        // Subsequent attempts: longer timeout (let it process)
+        const timeoutMs = attempts === 1 ? 1000 : 3000;
+
         timeoutId = setTimeout(() => {
           if (attemptHandled || settled) return;
           attemptHandled = true;
 
           if (attempts < maxRetries) {
-            console.log(`DMARC Reader: Message timeout, retry ${attempts}/${maxRetries}`);
-            setTimeout(attempt, 200 * attempts); // Exponential backoff
+            console.log(`DMARC Reader: Attempt ${attempts} timeout, retrying...`);
+            onRetry(attempts);
+            setTimeout(attempt, 100 * attempts); // Fast backoff: 100ms, 200ms, 300ms
           } else {
             settled = true;
             reject(new Error('Service worker did not respond after retries'));
@@ -45,14 +53,13 @@
             attemptHandled = true;
             clearTimeout(timeoutId);
 
-            // Check for runtime errors (service worker inactive, etc.)
             if (chrome.runtime.lastError) {
               const errMsg = chrome.runtime.lastError.message || 'Unknown error';
               console.log(`DMARC Reader: sendMessage error: ${errMsg}`);
 
               if (attempts < maxRetries) {
-                console.log(`DMARC Reader: Retrying (${attempts}/${maxRetries})...`);
-                setTimeout(attempt, 200 * attempts);
+                onRetry(attempts);
+                setTimeout(attempt, 100 * attempts);
               } else {
                 settled = true;
                 reject(new Error(errMsg));
@@ -69,8 +76,9 @@
           clearTimeout(timeoutId);
 
           if (attempts < maxRetries) {
-            console.log(`DMARC Reader: Exception, retry ${attempts}/${maxRetries}:`, err.message);
-            setTimeout(attempt, 200 * attempts);
+            console.log(`DMARC Reader: Exception, retrying:`, err.message);
+            onRetry(attempts);
+            setTimeout(attempt, 100 * attempts);
           } else {
             settled = true;
             reject(err);
@@ -199,11 +207,7 @@
     btn.setAttribute('data-dmarc-file', filename);
     btn.title = isInbox ? 'Open email to view DMARC Report' : 'View DMARC Report';
 
-    const svg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="white">
-      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/>
-    </svg>`;
-
-    btn.innerHTML = svg;
+    btn.innerHTML = ICONS.chart;
 
     Object.assign(btn.style, {
       width: '26px',
@@ -220,33 +224,50 @@
       flexShrink: '0'
     });
 
-    btn.onmouseenter = () => btn.style.background = '#1557b0';
-    btn.onmouseleave = () => btn.style.background = '#1a73e8';
+    btn.onmouseenter = () => {
+      if (!btn.classList.contains('dmarc-error')) {
+        btn.style.background = '#1557b0';
+      }
+    };
+    btn.onmouseleave = () => {
+      if (!btn.classList.contains('dmarc-error')) {
+        btn.style.background = '#1a73e8';
+      }
+    };
 
     btn.onclick = async (e) => {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
 
-      btn.innerHTML = '<div style="width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:dmarc-spin 1s linear infinite"></div>';
+      // Show connecting state immediately
+      setButtonState(btn, 'connecting');
 
       const url = findDownloadUrl(containerEl);
       if (url) {
         const data = await fetchAttachment(url);
         if (data) {
+          setButtonState(btn, 'processing');
           try {
             const response = await sendMessageWithRetry({
               action: 'processAttachment',
               data: Array.from(new Uint8Array(data)),
               filename: filename
+            }, {
+              onRetry: () => setButtonState(btn, 'connecting')
             });
-            btn.innerHTML = svg;
+
+            setButtonState(btn, 'success');
+            setTimeout(() => setButtonState(btn, 'default'), 1500);
+
             if (!response?.success) {
               await sendMessageWithRetry({ action: 'openViewer' });
             }
           } catch (err) {
             console.error('DMARC Reader: Failed to process attachment:', err);
-            btn.innerHTML = svg;
+            setButtonState(btn, 'error');
+            setTimeout(() => setButtonState(btn, 'default'), 3000);
+
             // Try to open viewer anyway - user can drop file manually
             try {
               await sendMessageWithRetry({ action: 'openViewer' });
@@ -260,7 +281,7 @@
 
       // No download URL found - we're in inbox listing
       // Navigate to email where the button will work
-      btn.innerHTML = svg;
+      setButtonState(btn, 'default');
 
       sessionStorage.setItem('dmarc_pending_file', filename);
 
@@ -282,21 +303,63 @@
       triggerDownload(containerEl);
       sendMessageWithRetry({ action: 'openViewer' }).catch(err => {
         console.error('DMARC Reader: Failed to open viewer:', err);
+        setButtonState(btn, 'error');
+        setTimeout(() => setButtonState(btn, 'default'), 3000);
       });
     };
 
     return btn;
   }
 
-  // CSS
+  // CSS with connection/processing states
   if (!document.getElementById('dmarc-style')) {
     const style = document.createElement('style');
     style.id = 'dmarc-style';
     style.textContent = `
       @keyframes dmarc-spin { to { transform: rotate(360deg); } }
+      @keyframes dmarc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       .dmarc-viewer-btn { transition: background 0.15s; }
+      .dmarc-connecting { animation: dmarc-pulse 0.8s ease-in-out infinite; }
+      .dmarc-error { background: #dc2626 !important; }
     `;
     document.head.appendChild(style);
+  }
+
+  // UI state constants
+  const ICONS = {
+    chart: `<svg viewBox="0 0 24 24" width="18" height="18" fill="white">
+      <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/>
+    </svg>`,
+    spinner: '<div style="width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:white;border-radius:50%;animation:dmarc-spin 0.8s linear infinite"></div>',
+    check: `<svg viewBox="0 0 24 24" width="18" height="18" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`,
+    error: `<svg viewBox="0 0 24 24" width="18" height="18" fill="white"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`
+  };
+
+  function setButtonState(btn, state) {
+    btn.classList.remove('dmarc-connecting', 'dmarc-error');
+    switch (state) {
+      case 'connecting':
+        btn.innerHTML = ICONS.spinner;
+        btn.classList.add('dmarc-connecting');
+        btn.title = 'Connecting...';
+        break;
+      case 'processing':
+        btn.innerHTML = ICONS.spinner;
+        btn.title = 'Processing...';
+        break;
+      case 'success':
+        btn.innerHTML = ICONS.check;
+        btn.title = 'Done!';
+        break;
+      case 'error':
+        btn.innerHTML = ICONS.error;
+        btn.classList.add('dmarc-error');
+        btn.title = 'Failed - click to retry';
+        break;
+      default:
+        btn.innerHTML = ICONS.chart;
+        btn.title = 'View DMARC Report';
+    }
   }
 
   function scan() {

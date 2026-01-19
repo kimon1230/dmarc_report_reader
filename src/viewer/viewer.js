@@ -34,6 +34,8 @@ const filterIpInput = document.getElementById('filter-ip');
 const filterCountrySelect = document.getElementById('filter-country');
 const filterMinCountInput = document.getElementById('filter-min-count');
 const filterHostnameInput = document.getElementById('filter-hostname');
+const filterClassificationSelect = document.getElementById('filter-classification');
+const filterProviderSelect = document.getElementById('filter-provider');
 const applyFiltersBtn = document.getElementById('apply-filters-btn');
 const clearFiltersBtn = document.getElementById('clear-filters-btn');
 const activeFilterCountBadge = document.getElementById('active-filter-count');
@@ -71,7 +73,9 @@ const filterState = {
   ip: '',
   country: '',
   minCount: 0,
-  hostname: ''
+  hostname: '',
+  classification: '',
+  provider: ''
 };
 
 // Sort state
@@ -145,6 +149,83 @@ function createBadge(status) {
 }
 
 /**
+ * Create classification badge for a record
+ * @param {Object} record - Record with _classification data
+ * @returns {string} HTML badge string
+ */
+function createClassificationBadge(record) {
+  // Only show classification for failing records
+  if (record.alignment?.dmarcPass) {
+    return '<span class="badge badge-neutral">-</span>';
+  }
+
+  const classification = record._classification;
+  if (!classification) {
+    return '<span class="badge badge-neutral">-</span>';
+  }
+
+  // Use the getClassificationDisplay function from classification.js if available
+  let display;
+  if (typeof getClassificationDisplay === 'function') {
+    display = getClassificationDisplay(classification.classification);
+  } else {
+    // Fallback if function not loaded
+    switch (classification.classification) {
+      case 'likely_spoof':
+        display = { label: 'Likely Spoof', badgeClass: 'classification-spoof' };
+        break;
+      case 'likely_legit_misconfig':
+        display = { label: 'Likely Misconfig', badgeClass: 'classification-misconfig' };
+        break;
+      default:
+        display = { label: 'Unknown', badgeClass: 'classification-unknown' };
+    }
+  }
+
+  // Build tooltip with signals
+  const signals = classification.signals || [];
+  const confidence = classification.confidence || 0;
+  const tooltip = signals.length > 0
+    ? `${signals.join('\\n')}\\nConfidence: ${confidence}%`
+    : `Confidence: ${confidence}%`;
+
+  return `<span class="badge ${display.badgeClass}" title="${escapeHtml(tooltip)}">${escapeHtml(display.label)}</span>`;
+}
+
+/**
+ * Render provider cell for a record
+ * @param {string} sourceIp - Source IP to lookup provider for
+ * @returns {string} HTML string for provider cell
+ */
+function renderProviderCell(sourceIp) {
+  // Get provider info from record (attached after fingerprinting)
+  // We need to look up the record from currentReport
+  let provider = null;
+
+  if (currentReport && sourceIp) {
+    // Find the record with this IP to get its provider
+    const record = currentReport.records.find(r => r.sourceIp === sourceIp);
+    provider = record?._provider;
+  }
+
+  if (!provider || provider.id === 'unknown') {
+    return '<td class="provider-cell">-</td>';
+  }
+
+  const categoryInfo = typeof getCategoryInfo === 'function'
+    ? getCategoryInfo(provider.category)
+    : { label: provider.category || 'Unknown' };
+
+  const tooltip = `${provider.name}\\n${categoryInfo.label}`;
+
+  return `<td class="provider-cell">
+    <span class="provider-badge" title="${escapeHtml(tooltip)}">
+      ${escapeHtml(provider.name)}
+    </span>
+  </td>`;
+}
+
+/**
  * Render summary cards with progress bars
  * @param {Object} summary - Report summary data
  */
@@ -204,6 +285,138 @@ function renderPolicy(policy) {
   document.getElementById('policy-adkim').textContent = policy.adkim || '-';
   document.getElementById('policy-aspf').textContent = policy.aspf || '-';
   document.getElementById('policy-pct').textContent = policy.percentage !== null ? `${policy.percentage}%` : '-';
+}
+
+/**
+ * Calculate enforcement readiness metrics from report data
+ * Evaluates whether it's safe to move to a more restrictive DMARC policy
+ * @param {Array} records - Array of parsed records
+ * @param {Object} policy - Published DMARC policy
+ * @returns {Object} Enforcement readiness assessment
+ */
+function calculateEnforcementReadiness(records, policy) {
+  const currentPolicy = policy?.policy || 'none';
+
+  // Calculate totals
+  let totalMessages = 0;
+  let alignedMessages = 0;
+  let failingSources = 0;
+  let failingMessages = 0;
+
+  for (const record of records) {
+    const count = record.count || 0;
+    totalMessages += count;
+
+    if (record.alignment?.dmarcPass) {
+      alignedMessages += count;
+    } else {
+      failingMessages += count;
+      failingSources++;
+    }
+  }
+
+  // Calculate alignment percentage
+  const alignedPercent = totalMessages > 0
+    ? Math.round((alignedMessages / totalMessages) * 100)
+    : 0;
+
+  // Determine readiness status based on thresholds
+  // Safe: 98%+ aligned, Caution: 90-98%, Not Ready: <90%
+  let status, statusText, statusIcon, recommendation;
+
+  if (currentPolicy === 'reject') {
+    // Already at maximum enforcement
+    status = 'none';
+    statusText = 'Maximum Enforcement';
+    statusIcon = '✓';
+    recommendation = `Your domain is already at the strictest DMARC policy (reject). ${alignedPercent}% of messages are properly aligned. Monitor failing sources to ensure they are not legitimate senders.`;
+  } else if (alignedPercent >= 98) {
+    status = 'safe';
+    statusText = currentPolicy === 'quarantine' ? 'Ready for Reject' : 'Ready for Quarantine';
+    statusIcon = '✓';
+
+    if (currentPolicy === 'none') {
+      recommendation = `With ${alignedPercent}% alignment, you can safely move to p=quarantine. This will send unauthenticated messages to spam folders. Consider monitoring for a few more reporting periods before moving to p=reject.`;
+    } else {
+      recommendation = `With ${alignedPercent}% alignment, you can safely move to p=reject. This will block unauthenticated messages entirely. Ensure all legitimate sending sources are properly configured before making this change.`;
+    }
+  } else if (alignedPercent >= 90) {
+    status = 'caution';
+    statusText = 'Proceed with Caution';
+    statusIcon = '⚠';
+
+    if (failingSources <= 3) {
+      recommendation = `${alignedPercent}% alignment with only ${failingSources} failing source(s). Review the failing sources - if they are misconfigured legitimate senders, fix them before increasing enforcement. If they appear to be unauthorized, you may consider increasing enforcement.`;
+    } else {
+      recommendation = `${alignedPercent}% alignment but ${failingSources} different sources are failing. Review each failing source before increasing enforcement. Moving to a stricter policy now may cause delivery issues for legitimate mail.`;
+    }
+  } else {
+    status = 'not-ready';
+    statusText = 'Not Ready';
+    statusIcon = '✗';
+    recommendation = `Only ${alignedPercent}% of messages are properly aligned. Do not increase enforcement at this time. Review and fix the ${failingSources} failing source(s) which account for ${failingMessages.toLocaleString()} message(s). Common issues: missing SPF includes for third-party senders, unsigned DKIM for some mail flows.`;
+  }
+
+  return {
+    currentPolicy,
+    totalMessages,
+    alignedMessages,
+    failingSources,
+    failingMessages,
+    alignedPercent,
+    status,
+    statusText,
+    statusIcon,
+    recommendation
+  };
+}
+
+/**
+ * Render the enforcement readiness panel
+ * @param {Object} readiness - Enforcement readiness data from calculateEnforcementReadiness
+ */
+function renderEnforcementReadiness(readiness) {
+  // Update gauge
+  const gaugeRing = document.getElementById('enforcement-gauge-ring');
+  const gaugeValue = document.getElementById('enforcement-gauge-value');
+  if (gaugeRing && gaugeValue) {
+    gaugeRing.style.setProperty('--gauge-percent', readiness.alignedPercent);
+    gaugeValue.textContent = `${readiness.alignedPercent}%`;
+  }
+
+  // Update status badge
+  const statusBadge = document.getElementById('enforcement-status-badge');
+  const statusIcon = document.getElementById('enforcement-status-icon');
+  const statusText = document.getElementById('enforcement-status-text');
+  if (statusBadge) {
+    statusBadge.className = `status-badge status-${readiness.status}`;
+    statusIcon.textContent = readiness.statusIcon;
+    statusText.textContent = readiness.statusText;
+  }
+
+  // Update current policy display
+  const currentPolicyEl = document.getElementById('enforcement-current-policy');
+  if (currentPolicyEl) {
+    currentPolicyEl.innerHTML = `Current Policy: <strong>${readiness.currentPolicy}</strong>`;
+  }
+
+  // Update metrics
+  document.getElementById('enforcement-total-messages').textContent =
+    readiness.totalMessages.toLocaleString();
+  document.getElementById('enforcement-aligned-messages').textContent =
+    readiness.alignedMessages.toLocaleString();
+  document.getElementById('enforcement-failing-sources').textContent =
+    readiness.failingSources.toLocaleString();
+  document.getElementById('enforcement-failing-volume').textContent =
+    readiness.failingMessages.toLocaleString();
+
+  // Update recommendation
+  const recommendationEl = document.getElementById('enforcement-recommendation');
+  const recommendationText = document.getElementById('enforcement-recommendation-text');
+  if (recommendationEl && recommendationText) {
+    recommendationEl.className = `enforcement-recommendation rec-${readiness.status}`;
+    recommendationText.textContent = readiness.recommendation;
+  }
 }
 
 /**
@@ -291,6 +504,135 @@ function renderReasons(reasons) {
   ).join('');
 
   return `<div class="reason-list">${reasonHtml}</div>`;
+}
+
+/**
+ * Explain when the applied disposition differs from the published DMARC policy
+ * This helps users understand why a message wasn't treated according to their policy
+ * @param {Object} record - Record data with policyEvaluated
+ * @param {Object} policy - Published DMARC policy from the report
+ * @returns {Object|null} Issue object if there's an override, null otherwise
+ */
+function explainDispositionOverride(record, policy) {
+  if (!record || !policy) return null;
+
+  const pe = record.policyEvaluated || {};
+  const appliedDisposition = pe.disposition;
+  const reason = pe.reason || [];
+
+  // Determine the expected disposition based on the published policy
+  // For subdomains, use sp if specified, otherwise fall back to p
+  const identifiers = record.identifiers || {};
+  const headerFrom = identifiers.headerFrom || '';
+  const policyDomain = policy.domain || '';
+
+  // Check if this is a subdomain (header_from is subdomain of policy domain)
+  const isSubdomain = headerFrom &&
+    policyDomain &&
+    headerFrom !== policyDomain &&
+    headerFrom.endsWith('.' + policyDomain);
+
+  const expectedPolicy = isSubdomain && policy.subdomainPolicy
+    ? policy.subdomainPolicy
+    : policy.policy;
+
+  // If policy is 'none', no enforcement expected
+  if (expectedPolicy === 'none') return null;
+
+  // If disposition matches expected policy, no override
+  if (appliedDisposition === expectedPolicy) return null;
+
+  // If the message passed DMARC, no disposition applies
+  if (record.alignment?.dmarcPass) return null;
+
+  // There's a discrepancy - explain why
+  const explanations = {
+    forwarded: {
+      title: 'Disposition Override: Message Forwarded',
+      explanation: `Your policy requests "${expectedPolicy}" but the receiver applied "${appliedDisposition || 'none'}". The receiver detected this message was forwarded, which commonly breaks SPF alignment. Many receivers reduce enforcement for forwarded mail to avoid blocking legitimate messages.`,
+      recommendations: [
+        'This is usually expected behavior for forwarded mail',
+        'Consider using ARC (Authenticated Received Chain) if available',
+        'DKIM signatures survive forwarding if the message body is unchanged'
+      ]
+    },
+    mailing_list: {
+      title: 'Disposition Override: Mailing List',
+      explanation: `Your policy requests "${expectedPolicy}" but the receiver applied "${appliedDisposition || 'none'}". This message passed through a mailing list, which typically modifies headers and breaks authentication. Most receivers relax enforcement for mailing list traffic.`,
+      recommendations: [
+        'Mailing lists often modify Subject lines or add footers, breaking DKIM',
+        'This is expected behavior and not a configuration problem',
+        'Users receiving via mailing lists may see reduced protection'
+      ]
+    },
+    local_policy: {
+      title: 'Disposition Override: Receiver Local Policy',
+      explanation: `Your policy requests "${expectedPolicy}" but the receiver applied "${appliedDisposition || 'none'}". The receiving server has its own local policy that overrode your DMARC policy. This is at the receiver's discretion.`,
+      recommendations: [
+        'Receivers can choose to override DMARC policies',
+        'This may be due to whitelisting, user preferences, or reputation',
+        'Your DMARC policy is still being honored by most receivers'
+      ]
+    },
+    sampled_out: {
+      title: 'Disposition Override: Sampling (pct)',
+      explanation: `Your policy requests "${expectedPolicy}" but the receiver applied "${appliedDisposition || 'none'}". Your DMARC policy has pct=${policy.percentage || 100}, meaning only ${policy.percentage || 100}% of failing messages should be subject to the policy. This message was in the non-enforced percentage.`,
+      recommendations: [
+        'This is expected behavior when using pct<100',
+        'Increase pct gradually as you gain confidence in your configuration',
+        'Once at pct=100, all failing messages will be subject to your policy'
+      ]
+    },
+    trusted_forwarder: {
+      title: 'Disposition Override: Trusted Forwarder',
+      explanation: `Your policy requests "${expectedPolicy}" but the receiver applied "${appliedDisposition || 'none'}". The receiver recognized this as coming from a trusted forwarder and relaxed enforcement.`,
+      recommendations: [
+        'Trusted forwarders are whitelisted by some receivers',
+        'This is similar to ARC-based authentication',
+        'Your policy is still honored for direct mail flows'
+      ]
+    },
+    other: {
+      title: 'Disposition Override',
+      explanation: `Your policy requests "${expectedPolicy}" but the receiver applied "${appliedDisposition || 'none'}". The receiver chose to override your policy for reasons not specified in the report.`,
+      recommendations: [
+        'Check if the sending IP has good reputation',
+        'Receivers may override based on historical sending patterns',
+        'This does not necessarily indicate a problem'
+      ]
+    }
+  };
+
+  // Find the reason type from the record
+  const reasonTypes = reason.map(r => r.type?.toLowerCase());
+
+  // Match to known override reasons
+  let matchedExplanation = null;
+  for (const reasonType of reasonTypes) {
+    if (explanations[reasonType]) {
+      matchedExplanation = explanations[reasonType];
+      break;
+    }
+  }
+
+  // If no specific reason matched but there is a disposition difference
+  if (!matchedExplanation && appliedDisposition !== expectedPolicy) {
+    // Check if it's likely sampling (pct < 100)
+    if (policy.percentage !== null && policy.percentage < 100 && appliedDisposition === 'none') {
+      matchedExplanation = explanations.sampled_out;
+    } else {
+      matchedExplanation = explanations.other;
+    }
+  }
+
+  if (matchedExplanation) {
+    return {
+      type: 'override',
+      ...matchedExplanation
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -415,12 +757,19 @@ function getRecordDiagnosis(record) {
       },
       'permerror': {
         title: 'SPF Permanent Error',
-        explanation: 'Your SPF record has a syntax error or exceeds the 10 DNS lookup limit, preventing verification.',
+        explanation: 'The SPF record has a configuration error that prevents evaluation. This typically means the record is malformed or exceeds DNS lookup limits.',
         recommendations: [
-          'Check SPF record syntax using an SPF validator',
-          'Reduce DNS lookups by flattening includes',
-          'Remove redundant or unused mechanisms',
-          'Consider using an SPF flattening service'
+          'SPF allows maximum 10 DNS lookups (include, a, mx, ptr, exists mechanisms)',
+          'Each "include:" counts as at least 1 lookup, plus any nested includes',
+          'Common fix: flatten includes by replacing with ip4/ip6 mechanisms',
+          'Check record syntax: must start with v=spf1 and end with ~all or -all',
+          'Use an SPF validator tool to diagnose the specific error'
+        ],
+        commonCauses: [
+          'Too many include: mechanisms (e.g., Google + Microsoft + SendGrid = >10 lookups)',
+          'Syntax error in SPF record (missing space, invalid mechanism)',
+          'Circular include references between domains',
+          'Void lookups (mechanisms that return no DNS results)'
         ]
       }
     };
@@ -473,6 +822,12 @@ function getRecordDiagnosis(record) {
     });
   }
 
+  // Check for disposition override (when applied disposition differs from published policy)
+  const overrideExplanation = explainDispositionOverride(record, currentReport?.policy);
+  if (overrideExplanation) {
+    issues.push(overrideExplanation);
+  }
+
   return issues;
 }
 
@@ -493,18 +848,31 @@ function renderDiagnosis(record) {
     `;
   }
 
-  const issuesHtml = issues.map(issue => `
-    <div class="diagnosis-item diagnosis-${issue.type}">
-      <h5>${issue.title}</h5>
-      <p class="diagnosis-explanation">${issue.explanation}</p>
-      <div class="diagnosis-recommendations">
-        <strong>Recommendations:</strong>
+  const issuesHtml = issues.map(issue => {
+    // Optional commonCauses section (e.g., for permerror)
+    const commonCausesHtml = issue.commonCauses ? `
+      <div class="diagnosis-common-causes">
+        <strong>Common Causes:</strong>
         <ul>
-          ${issue.recommendations.map(r => `<li>${r}</li>`).join('')}
+          ${issue.commonCauses.map(c => `<li>${c}</li>`).join('')}
         </ul>
       </div>
-    </div>
-  `).join('');
+    ` : '';
+
+    return `
+      <div class="diagnosis-item diagnosis-${issue.type}">
+        <h5>${issue.title}</h5>
+        <p class="diagnosis-explanation">${issue.explanation}</p>
+        ${commonCausesHtml}
+        <div class="diagnosis-recommendations">
+          <strong>Recommendations:</strong>
+          <ul>
+            ${issue.recommendations.map(r => `<li>${r}</li>`).join('')}
+          </ul>
+        </div>
+      </div>
+    `;
+  }).join('');
 
   return `
     <div class="diagnosis-section">
@@ -735,6 +1103,22 @@ function filterRecords(records) {
       }
     }
 
+    // Classification filter
+    if (filterState.classification) {
+      const recordClassification = record._classification?.classification || 'unknown';
+      if (recordClassification !== filterState.classification) {
+        return false;
+      }
+    }
+
+    // Provider filter
+    if (filterState.provider) {
+      const recordProvider = record._provider?.id || 'unknown';
+      if (recordProvider !== filterState.provider) {
+        return false;
+      }
+    }
+
     return true;
   });
 }
@@ -751,6 +1135,8 @@ function countActiveFilters() {
   if (filterState.country) count++;
   if (filterState.minCount > 0) count++;
   if (filterState.hostname) count++;
+  if (filterState.classification) count++;
+  if (filterState.provider) count++;
   return count;
 }
 
@@ -798,6 +1184,38 @@ function populateCountryFilter() {
 }
 
 /**
+ * Populate provider dropdown from current records
+ */
+function populateProviderFilter() {
+  if (!filterProviderSelect || !currentReport) return;
+
+  const providers = new Map();
+
+  for (const record of currentReport.records) {
+    const provider = record._provider;
+    if (provider && provider.id !== 'unknown') {
+      providers.set(provider.id, provider.name);
+    }
+  }
+
+  // Sort by provider name
+  const sorted = [...providers.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+
+  // Clear existing options except first
+  while (filterProviderSelect.options.length > 1) {
+    filterProviderSelect.remove(1);
+  }
+
+  // Add provider options
+  for (const [id, name] of sorted) {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = name;
+    filterProviderSelect.appendChild(option);
+  }
+}
+
+/**
  * Apply current filter input values to filter state
  */
 function applyFilters() {
@@ -807,6 +1225,8 @@ function applyFilters() {
   filterState.country = filterCountrySelect?.value || '';
   filterState.minCount = parseInt(filterMinCountInput?.value, 10) || 0;
   filterState.hostname = filterHostnameInput?.value?.trim() || '';
+  filterState.classification = filterClassificationSelect?.value || '';
+  filterState.provider = filterProviderSelect?.value || '';
 
   updateFilterBadge();
 
@@ -825,6 +1245,8 @@ function clearFilters() {
   filterState.country = '';
   filterState.minCount = 0;
   filterState.hostname = '';
+  filterState.classification = '';
+  filterState.provider = '';
 
   // Reset input elements
   if (filterSelect) filterSelect.value = 'all';
@@ -833,6 +1255,8 @@ function clearFilters() {
   if (filterCountrySelect) filterCountrySelect.value = '';
   if (filterMinCountInput) filterMinCountInput.value = '';
   if (filterHostnameInput) filterHostnameInput.value = '';
+  if (filterClassificationSelect) filterClassificationSelect.value = '';
+  if (filterProviderSelect) filterProviderSelect.value = '';
 
   updateFilterBadge();
 
@@ -923,9 +1347,11 @@ function renderRecords(records) {
       <td class="ip-cell">${safeIp}</td>
       ${renderHostnameCell(record.sourceIp)}
       ${renderLocationCell(record.sourceIp)}
+      ${renderProviderCell(record.sourceIp)}
       ${renderFromDomainCell(record)}
       <td>${record.count.toLocaleString()}</td>
       <td>${createBadge(pe.disposition)}${renderAlignmentWarning(record)}</td>
+      <td>${createClassificationBadge(record)}</td>
       <td>${createBadge(pe.dkim)}</td>
       <td>${createBadge(pe.spf)}</td>
       <td><button class="details-toggle" data-index="${index}">Show</button></td>
@@ -937,7 +1363,7 @@ function renderRecords(records) {
     detailsRow.className = 'details-row hidden';
     detailsRow.id = `details-${index}`;
     const reasonsHtml = renderReasons(pe.reasons);
-    detailsRow.innerHTML = `<td colspan="9">${renderDetails(record)}${reasonsHtml}</td>`;
+    detailsRow.innerHTML = `<td colspan="11">${renderDetails(record)}${reasonsHtml}</td>`;
     recordsBody.appendChild(detailsRow);
   });
 
@@ -967,7 +1393,25 @@ function updateLocationCells() {
   // Populate country dropdown with discovered countries
   populateCountryFilter();
 
-  // Re-render the entire table to update hostname and location cells
+  // Apply provider fingerprinting to all records
+  if (typeof fingerprintProvider === 'function') {
+    for (const record of currentReport.records) {
+      const geoData = ipGeoData.get(record.sourceIp);
+      record._provider = fingerprintProvider(geoData);
+    }
+  }
+
+  // Re-run classification with provider info now available
+  if (typeof classifyRecord === 'function') {
+    for (const record of currentReport.records) {
+      record._classification = classifyRecord(record, record._provider);
+    }
+  }
+
+  // Populate provider dropdown
+  populateProviderFilter();
+
+  // Re-render the entire table to update hostname, location, and provider cells
   renderRecords(currentReport.records);
 
   // Re-calculate and render analysis with geo data now available
@@ -1260,9 +1704,24 @@ function displayReport(report) {
   currentReport = report;
   enrichmentSkipped = false;
 
+  // Apply classification to all records
+  // Note: Provider fingerprinting will be added in Checkpoint 3
+  if (typeof classifyRecord === 'function') {
+    for (const record of report.records) {
+      // Classification is applied without provider info initially
+      // It will be re-applied after geo data loads with provider fingerprinting
+      record._classification = classifyRecord(record, null);
+    }
+  }
+
   renderSummary(report.summary);
   renderMetadata(report.metadata);
   renderPolicy(report.policy);
+
+  // Calculate and render enforcement readiness
+  const readiness = calculateEnforcementReadiness(report.records, report.policy);
+  renderEnforcementReadiness(readiness);
+
   renderRecords(report.records);
 
   // Initial analysis render (will be updated after geo data loads)
@@ -2318,11 +2777,69 @@ function showWaitingForDownload(filename) {
   banner.dataset.pollInterval = pollInterval;
 }
 
+// =============================================================================
+// Debug Mode
+// =============================================================================
+
+/**
+ * Check if debug mode is enabled via localStorage
+ * @returns {boolean} True if debug mode is active
+ */
+function isDebugMode() {
+  try {
+    return localStorage.getItem('dmarcDebugMode') === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Initialize debug mode from URL parameter
+ * Allows enabling via ?debug=1
+ */
+function initDebugMode() {
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('debug') === '1') {
+    localStorage.setItem('dmarcDebugMode', 'true');
+    console.log('DMARC Debug Mode enabled via URL parameter');
+    console.log('To disable: localStorage.removeItem("dmarcDebugMode")');
+  }
+
+  if (isDebugMode()) {
+    console.log('DMARC Debug Mode is active');
+  }
+}
+
+/**
+ * Render robustness note for a record (debug mode only)
+ * @param {Object} record - Record with _robustness data
+ * @returns {string} HTML string or empty if not in debug mode
+ */
+function renderRobustnessNote(record) {
+  if (!isDebugMode()) return '';
+
+  const r = record._robustness;
+  if (!r || r.confidence === 'high') return '';
+
+  const issues = [];
+  if (r.missingAuthResults) issues.push('Missing auth_results');
+  if (r.incompleteDkim) issues.push('Incomplete DKIM');
+  if (r.incompleteSpf) issues.push('Incomplete SPF');
+
+  return `<div class="debug-note" title="${issues.join(', ')}">
+    <span class="debug-confidence debug-confidence-${r.confidence}">${r.confidence}</span>
+    ${r.receiverName ? `<span class="debug-receiver">${escapeHtml(r.receiverName)}</span>` : ''}
+  </div>`;
+}
+
 /**
  * Initialize viewer - check for stored report data
  * Handles both new format (ExtractionResult) and legacy format (raw XML string)
  */
 function initViewer() {
+  // Initialize debug mode from URL param
+  initDebugMode();
+
   if (typeof chrome !== 'undefined' && chrome.storage) {
     // Check for new format first, then legacy
     chrome.storage.local.get([STORAGE_KEY_REPORT_DATA, 'currentXml'], (result) => {
