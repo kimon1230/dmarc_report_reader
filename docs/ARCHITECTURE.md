@@ -104,48 +104,74 @@ Content Script ──processAttachment──▶ Service Worker
 
 ### Webmail Integration Flow
 
-The extension uses the Chrome Downloads API for seamless webmail integration, as direct attachment access is blocked by webmail security policies.
+The extension injects buttons next to DMARC attachments and fetches them directly using the user's authenticated session.
+
+#### Gmail - Email View Flow
 
 ```
-Gmail/Outlook Page Load
+Gmail Email View Load
          │
          ▼
    MutationObserver watches DOM
          │
          ▼
-   TreeWalker scans for DMARC filenames
+   Scan for elements with DMARC filenames (aria-label, data-tooltip)
          │
          ▼
-   Inject "View DMARC Report" button
+   Inject blue chart button next to attachment
          │
          ▼
-   On click: Notify service worker → Trigger native download
+   On click: Find attachment download URL
          │
          ▼
-   Service Worker monitors chrome.downloads.onChanged
+   Fetch attachment data (with credentials)
          │
          ▼
-   Download completes → Auto-open viewer with ?fromDownload=true
+   Send to Service Worker for extraction
          │
          ▼
-   Viewer shows notification, auto-opens file picker
-         │
-         ▼
-   User selects downloaded file → Report displayed
-         │
-         ▼
-   Cleanup: Downloaded file removed after processing
+   Open Viewer tab with parsed report
 ```
+
+#### Gmail - Inbox View Flow
+
+```
+Gmail Inbox View
+         │
+         ▼
+   Scan attachment chips for DMARC filenames
+         │
+         ▼
+   Inject button next to attachment chip
+         │
+         ▼
+   On click: Store pending filename in sessionStorage
+         │
+         ▼
+   Navigate to email (click row)
+         │
+         ▼
+   Email loads → checkPendingFile() finds matching button
+         │
+         ▼
+   Auto-click button → Process attachment → Open Viewer
+```
+
+#### Outlook Web Flow
+
+> **Note:** Outlook Web integration requires testing.
+
+Similar flow to Gmail, with selectors adapted for Outlook's DOM structure.
 
 **Key Design Decisions:**
 
-1. **Download-based approach**: Gmail/Outlook block direct attachment fetch from content scripts. The extension triggers the native download button and monitors for completion.
+1. **Direct fetch approach**: Gmail allows fetching attachments via authenticated URLs constructed from thread IDs. The extension finds these URLs by traversing the DOM.
 
-2. **Automatic viewer launch**: When a DMARC file download completes, the viewer opens automatically with the filename shown.
+2. **Inbox navigation**: When clicking from inbox, the extension navigates to the email first (Gmail doesn't expose download URLs in inbox view), then auto-processes.
 
-3. **File cleanup**: Downloaded files are removed from disk and download history after successful processing (or after 5-minute timeout as fallback).
+3. **Tab positioning**: Viewer tabs open immediately to the right of the current tab for easy reference.
 
-4. **Duplicate prevention**: WeakSet tracks processed DOM elements to prevent multiple button injections.
+4. **Duplicate prevention**: Buttons are cleared and re-scanned on DOM changes to prevent duplicates.
 
 ## Viewer Features
 

@@ -125,11 +125,18 @@ dot -Tpng docs/architecture.dot -o docs/architecture.png
 - [ ] Pass/fail indicators are color-coded
 - [ ] IP geolocation loads (may take a moment)
 
-#### Webmail Integration
-- [ ] Gmail: DMARC attachments detected
-- [ ] Gmail: "View Report" button appears
+#### Webmail Integration - Gmail
+- [ ] Gmail: DMARC attachments detected in email view
+- [ ] Gmail: Blue chart button appears next to attachments
+- [ ] Gmail: Clicking button opens viewer with parsed report
+- [ ] Gmail: DMARC attachments detected in inbox listing
+- [ ] Gmail: Clicking inbox button navigates to email and auto-processes
+
+#### Webmail Integration - Outlook Web (NEEDS TESTING)
+> **Note:** Outlook Web integration has been implemented but requires testing.
 - [ ] Outlook: DMARC attachments detected
 - [ ] Outlook: "View Report" button appears
+- [ ] Outlook: Clicking button processes attachment correctly
 
 ### Test Files
 

@@ -48,14 +48,26 @@ Coming soon.
 
 ### Webmail Integration
 
-When viewing emails in Gmail or Outlook Web:
+#### Gmail
+
+The extension detects DMARC attachments in Gmail and shows a blue chart button:
+
+**From Inbox View:**
+1. DMARC attachment chips show the viewer button
+2. Click the button - the extension navigates to the email
+3. The attachment is automatically processed and the viewer opens
+4. You stay on the email for reference
+
+**From Email View:**
 1. Open an email containing a DMARC report attachment
-2. Look for the "View DMARC Report" button next to matching attachments
-3. Click the button - the extension will:
-   - Trigger the download automatically
-   - Open the DMARC viewer when the download completes
-   - Prompt you to select the just-downloaded file
-   - Clean up the downloaded file after processing
+2. Look for the blue chart button next to matching attachments
+3. Click the button - the viewer opens with the parsed report
+
+#### Outlook Web
+
+> **Note:** Outlook Web integration has been implemented but requires testing. Please report any issues.
+
+The extension should detect DMARC attachments in Outlook Web (outlook.live.com and outlook.office.com) with similar functionality to Gmail.
 
 **Detected filenames**: Attachments containing "dmarc" or matching the standard format (e.g., `google.com!example.com!1234567890!1234567891.xml.gz`).
 

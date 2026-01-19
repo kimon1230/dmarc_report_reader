@@ -41,6 +41,50 @@
       }
       current = current.parentElement;
     }
+
+    // Try to construct URL from inbox row data
+    // Find thread ID from the row
+    current = el;
+    for (let i = 0; i < 20 && current; i++) {
+      // Log what we're checking
+      const attrs = Array.from(current.attributes || []).map(a => `${a.name}="${a.value.substring(0, 50)}"`).join(', ');
+      if (attrs.length > 0 && i < 5) {
+        console.log('DMARC Reader: Checking element:', current.tagName, attrs.substring(0, 200));
+      }
+
+      // Look for thread ID in data attributes
+      const threadId = current.getAttribute('data-thread-id') ||
+                       current.getAttribute('data-message-id') ||
+                       current.getAttribute('data-legacy-thread-id') ||
+                       current.getAttribute('data-item-id');
+
+      if (threadId) {
+        const userMatch = window.location.pathname.match(/\/mail\/u\/(\d+)/);
+        const userNum = userMatch ? userMatch[1] : '0';
+        const url = `https://mail.google.com/mail/u/${userNum}/?ui=2&attid=0.1&disp=safe&th=${threadId}&zw`;
+        console.log('DMARC Reader: Constructed URL from thread ID:', threadId);
+        return url;
+      }
+
+      // Check all links in this element for thread references
+      const allLinks = current.querySelectorAll('a[href]');
+      for (const link of allLinks) {
+        const href = link.href || '';
+        // Match patterns like #inbox/FMfcgzQZTCsq or #inbox/19b7ab44902c2dbe
+        const hrefMatch = href.match(/#(?:inbox|sent|label\/[^/]+|search\/[^/]+)\/([A-Za-z0-9_-]+)/);
+        if (hrefMatch && hrefMatch[1].length > 10) {
+          const userMatch = window.location.pathname.match(/\/mail\/u\/(\d+)/);
+          const userNum = userMatch ? userMatch[1] : '0';
+          const url = `https://mail.google.com/mail/u/${userNum}/?ui=2&attid=0.1&disp=safe&th=${hrefMatch[1]}&zw`;
+          console.log('DMARC Reader: Constructed URL from link href:', hrefMatch[1]);
+          return url;
+        }
+      }
+
+      current = current.parentElement;
+    }
+
+    console.log('DMARC Reader: Could not find thread ID');
     return null;
   }
 
@@ -72,11 +116,11 @@
     return false;
   }
 
-  function createButton(filename, containerEl) {
+  function createButton(filename, containerEl, isInbox = false) {
     const btn = document.createElement('div');
     btn.className = 'dmarc-viewer-btn';
     btn.setAttribute('data-dmarc-file', filename);
-    btn.title = 'View DMARC Report';
+    btn.title = isInbox ? 'Open email to view DMARC Report' : 'View DMARC Report';
 
     const svg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="white">
       <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 10h2v7H7zm4-3h2v10h-2zm4 6h2v4h-2z"/>
@@ -127,10 +171,29 @@
         }
       }
 
-      // Fallback: trigger native download and open viewer
+      // No download URL found - we're in inbox listing
+      // Navigate to email where the button will work
+      btn.innerHTML = svg;
+
+      sessionStorage.setItem('dmarc_pending_file', filename);
+
+      let row = containerEl;
+      for (let i = 0; i < 15 && row; i++) {
+        if (row.getAttribute('role') === 'row' || row.classList.contains('zA')) {
+          const clickable = row.querySelector('.xT, .y6, [data-thread-id], .bog, .bqe');
+          if (clickable) {
+            clickable.click();
+            return;
+          }
+          row.click();
+          return;
+        }
+        row = row.parentElement;
+      }
+
+      // Last resort: trigger download and open viewer
       triggerDownload(containerEl);
       chrome.runtime.sendMessage({ action: 'openViewer' });
-      btn.innerHTML = svg;
     };
 
     return btn;
@@ -177,8 +240,51 @@
       addedFiles.add(filename);
       console.log('DMARC Reader: Adding button for', filename);
 
-      const btn = createButton(filename, el);
+      const btn = createButton(filename, el, false);
       el.parentElement?.appendChild(btn);
+    }
+
+    // Also check inbox listing - attachment chips may use different structure
+    // Look for attachment preview elements that contain DMARC filenames as text
+    const attachmentChips = document.querySelectorAll('[data-tooltip], .aZo, .brg');
+    for (const el of attachmentChips) {
+      // Check text content for filename patterns
+      const text = el.textContent || '';
+      if (text.length > 200) continue; // Skip large elements
+
+      const filename = extractFilename(text);
+      if (!filename || !isDmarcFile(filename)) continue;
+      if (addedFiles.has(filename)) continue;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 30 || rect.height < 15) continue;
+
+      addedFiles.add(filename);
+      console.log('DMARC Reader: Adding button for (inbox)', filename);
+
+      const btn = createButton(filename, el, true);
+      // For inbox chips, append to parent or after element
+      if (el.parentElement) {
+        el.parentElement.appendChild(btn);
+      }
+    }
+  }
+
+  // Check for pending file to auto-process after navigation from inbox
+  function checkPendingFile() {
+    const pendingFile = sessionStorage.getItem('dmarc_pending_file');
+    if (!pendingFile) return;
+
+    // Only process if we're now in email view (not inbox)
+    const hash = window.location.hash;
+    if (hash === '#inbox' || hash === '#sent' || !hash.includes('/')) return;
+
+    // Find button for this file and click it
+    const btn = document.querySelector(`.dmarc-viewer-btn[data-dmarc-file="${pendingFile}"]`);
+    if (btn) {
+      console.log('DMARC Reader: Auto-clicking button for', pendingFile);
+      sessionStorage.removeItem('dmarc_pending_file');
+      btn.click();
     }
   }
 
@@ -186,13 +292,17 @@
   let timeout;
   const observer = new MutationObserver(() => {
     clearTimeout(timeout);
-    timeout = setTimeout(scan, 600);
+    timeout = setTimeout(() => {
+      scan();
+      checkPendingFile();
+    }, 600);
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
 
   setTimeout(scan, 1500);
   setTimeout(scan, 3500);
+  setTimeout(checkPendingFile, 2000);
 
   console.log('DMARC Reader: Loaded');
 })();

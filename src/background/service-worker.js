@@ -37,18 +37,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.action === 'openViewer') {
     const viewerUrl = chrome.runtime.getURL('src/viewer/viewer.html');
-    chrome.tabs.create({ url: viewerUrl }, () => {
+    // Open tab next to current tab
+    const tabIndex = sender.tab ? sender.tab.index + 1 : undefined;
+    chrome.tabs.create({ url: viewerUrl, index: tabIndex }, () => {
       sendResponse({ success: true });
     });
     return true;
   }
 
   if (message.action === 'processAttachment') {
+    // Get tab index before async operation
+    const tabIndex = sender.tab ? sender.tab.index + 1 : undefined;
+
     extractFile(message.data, message.filename)
       .then(xmlString => {
         chrome.storage.local.set({ currentXml: xmlString }, () => {
           const viewerUrl = chrome.runtime.getURL('src/viewer/viewer.html');
-          chrome.tabs.create({ url: viewerUrl }, () => {
+          // Open tab next to current tab
+          chrome.tabs.create({ url: viewerUrl, index: tabIndex }, () => {
             sendResponse({ success: true });
           });
         });
@@ -59,6 +65,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true;
   }
+
 });
 
 console.log('DMARC Report Reader service worker ready');

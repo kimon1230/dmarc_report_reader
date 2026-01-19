@@ -18,7 +18,7 @@ digraph DMARCReportReader {
 
         file_drop [label="File Drop/Pick\n(popup.js)"];
         gmail [label="Gmail\n(gmail.js)"];
-        outlook [label="Outlook Web\n(outlook.js)"];
+        outlook [label="Outlook Web\n(outlook.js)\n[Needs Testing]", style="filled,dashed"];
     }
 
     subgraph cluster_processing {
