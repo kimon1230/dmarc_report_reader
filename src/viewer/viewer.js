@@ -145,7 +145,7 @@ function createBadge(status) {
     className = 'badge-fail';
   }
 
-  return `<span class="badge ${className}">${status}</span>`;
+  return `<span class="badge ${className}">${escapeHtml(status)}</span>`;
 }
 
 /**

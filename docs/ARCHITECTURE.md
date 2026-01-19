@@ -174,9 +174,9 @@ Gmail Inbox View
    Auto-click button → Process attachment → Open Viewer
 ```
 
-#### Outlook Web Flow
+#### Outlook Web Flow (Experimental)
 
-> **Note:** Outlook Web integration requires testing.
+> **Warning:** Outlook Web integration is **experimental** and not fully tested. The DOM structure of Outlook Web changes frequently, which may break the integration.
 
 Similar flow to Gmail, with selectors adapted for Outlook's DOM structure.
 

@@ -11,12 +11,13 @@
 ```
 dmarc_report_reader/
 ├── manifest.json              # Extension manifest (V3)
+├── package.json               # npm package definition, test scripts
 ├── src/
 │   ├── background/
 │   │   └── service-worker.js  # Background service worker
 │   ├── content/
 │   │   ├── gmail.js           # Gmail content script (with retry UX)
-│   │   └── outlook.js         # Outlook Web content script
+│   │   └── outlook.js         # Outlook Web content script [EXPERIMENTAL]
 │   ├── parser/
 │   │   ├── file-handler.js    # Format detection and extraction
 │   │   ├── dmarc-parser.js    # XML to JSON parsing, alignment engine
@@ -24,29 +25,47 @@ dmarc_report_reader/
 │   ├── services/
 │   │   ├── ip-lookup.js       # IP geolocation service
 │   │   └── provider-fingerprint.js  # ESP/provider detection
+│   ├── lib/
+│   │   └── errors.js          # Structured error types
 │   ├── viewer/
 │   │   ├── viewer.html        # Report viewer page
 │   │   ├── viewer.js          # Viewer logic, enforcement readiness
-│   │   └── viewer.css         # Viewer styles
+│   │   ├── viewer.css         # Viewer styles
+│   │   └── modules/           # Viewer modules
+│   │       ├── ui-utils.js        # UI helper functions
+│   │       ├── filter-engine.js   # Record filtering/sorting
+│   │       ├── diagnosis-engine.js # Error diagnosis
+│   │       ├── analysis-engine.js  # Enforcement readiness
+│   │       └── export-engine.js    # JSON/CSV export
 │   └── popup/
 │       ├── popup.html         # Extension popup
 │       ├── popup.js           # Popup logic
 │       └── popup.css          # Popup styles
 ├── lib/
-│   ├── jszip.min.js           # ZIP library
-│   └── pako.min.js            # GZIP library
+│   ├── jszip.min.js           # ZIP library (vendored, SHA-384 verified)
+│   └── pako.min.js            # GZIP library (vendored, SHA-384 verified)
 ├── icons/
 │   ├── icon16.png
 │   ├── icon48.png
 │   └── icon128.png
+├── scripts/
+│   └── validate-libs.js       # Vendor library integrity validation
 ├── tests/
+│   ├── fixtures/              # Test fixture files
 │   ├── test-parser.html       # Browser-based parser tests
-│   └── test-logic.js          # Node.js CLI tests (67 tests)
+│   ├── test-logic.js          # Node.js unit tests (67 tests)
+│   └── test-integration.js    # Node.js integration tests (28 tests)
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── architecture.dot       # Graphviz source
 │   ├── architecture.png       # Generated diagram
 │   └── DEVELOPER.md           # This file
+├── .github/
+│   └── workflows/
+│       └── ci.yml             # GitHub Actions CI pipeline
+├── CHANGELOG.md               # Version history
+├── CONTRIBUTING.md            # Contribution guidelines
+├── SECURITY.md                # Security policy
 └── README.md
 ```
 
@@ -110,13 +129,30 @@ dot -Tpng docs/architecture.dot -o docs/architecture.png
 
 ### Automated Tests
 
-Run the Node.js test suite (67 tests covering core logic):
+Run all tests with npm:
 
 ```bash
-node tests/test-logic.js
+# Run all tests (unit + integration)
+npm run test:all
+
+# Run unit tests only (67 tests)
+npm test
+
+# Run integration tests only (28 tests)
+npm run test:integration
+
+# Validate vendor library integrity
+npm run validate-libs
 ```
 
-This tests:
+Or run directly with Node.js:
+
+```bash
+node tests/test-logic.js       # Unit tests
+node tests/test-integration.js # Integration tests
+```
+
+**Unit tests cover:**
 - Organizational domain extraction
 - DMARC alignment computation
 - Classification heuristics
@@ -125,6 +161,14 @@ This tests:
 - Robustness signals
 - Disposition override logic
 - Debug mode
+
+**Integration tests cover:**
+- Format detection (XML, GZIP, ZIP magic bytes)
+- GZIP extraction (valid, corrupted, empty)
+- ZIP extraction (single file, multiple files, non-DMARC)
+- Full pipeline parsing (GZIP → XML → JSON)
+- Report structure validation
+- Error handling for malformed inputs
 
 ### Manual Testing Checklist
 
@@ -187,8 +231,9 @@ This tests:
 - [ ] Gmail: DMARC attachments detected in inbox listing
 - [ ] Gmail: Clicking inbox button navigates to email and auto-processes
 
-#### Webmail Integration - Outlook Web (NEEDS TESTING)
-> **Note:** Outlook Web integration has been implemented but requires testing.
+#### Webmail Integration - Outlook Web (EXPERIMENTAL)
+> **Warning:** Outlook Web integration is **experimental**. The DOM structure of Outlook Web changes frequently, which may cause the integration to break. Contributors welcome to help improve and test this feature.
+
 - [ ] Outlook: DMARC attachments detected
 - [ ] Outlook: "View Report" button appears
 - [ ] Outlook: Clicking button processes attachment correctly

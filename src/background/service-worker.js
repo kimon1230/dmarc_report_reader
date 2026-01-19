@@ -137,6 +137,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   const action = message.action;
 
+  // Ping action - used to wake up the service worker
+  // This is a lightweight check that confirms the worker is running
+  if (action === 'ping') {
+    sendResponse({ success: true, pong: true });
+    return true;
+  }
+
   if (action === 'processFile') {
     // Validate message payload
     if (!isValidFileData(message.data)) {

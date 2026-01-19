@@ -71,11 +71,11 @@ The extension detects DMARC attachments in Gmail and shows a blue chart button:
 2. Look for the blue chart button next to matching attachments
 3. Click the button - the viewer opens with the parsed report
 
-#### Outlook Web
+#### Outlook Web (Experimental)
 
-> **Note:** Outlook Web integration has been implemented but requires testing. Please report any issues.
+> **Warning:** Outlook Web integration is **experimental** and not fully tested. It may not work reliably in all scenarios. Please report any issues on GitHub.
 
-The extension should detect DMARC attachments in Outlook Web (outlook.live.com and outlook.office.com) with similar functionality to Gmail.
+The extension attempts to detect DMARC attachments in Outlook Web (outlook.live.com and outlook.office.com) with similar functionality to Gmail.
 
 **Detected filenames**: Attachments containing "dmarc" or matching the standard format (e.g., `google.com!example.com!1234567890!1234567891.xml.gz`).
 

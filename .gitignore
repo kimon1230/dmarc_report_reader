@@ -1,3 +1,19 @@
+# Dependencies
+node_modules/
+
+# Secrets and credentials (NEVER commit these)
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.*
+credentials.*
+*_secret*
+*_token*
+oauth*.json
+
 # Virtual Environment
 .venv/
 venv/
@@ -25,9 +41,12 @@ Thumbs.db
 *.pem
 *.zip
 
-# Test DMARC files (sample data)
-*.xml
-*.xml.gz
+# Test DMARC files (sample data in root)
+/*.xml
+/*.xml.gz
+
+# But keep test fixtures
+!tests/fixtures/
 
 # Logs
 *.log

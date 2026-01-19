@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+      - name: Validate vendor libraries
+        run: npm run validate-libs
+
+  security:
+    name: Security Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Checking for potential secrets in source code..."
+          # Check for common secret patterns (API keys, passwords, tokens)
+          if grep -rE "(api[_-]?key|secret|password|token)\s*[:=]\s*['\"][^'\"]+['\"]" src/ --include="*.js" 2>/dev/null; then
+            echo "WARNING: Potential secrets found in source code"
+            exit 1
+          fi
+          echo "No hardcoded secrets detected"
+
+      - name: Check for sensitive file patterns
+        run: |
+          echo "Checking for sensitive files..."
+          # Check for files that shouldn't be committed
+          SENSITIVE_FILES=".env credentials.json secrets.json *.pem *.key"
+          for pattern in $SENSITIVE_FILES; do
+            if ls $pattern 2>/dev/null; then
+              echo "ERROR: Sensitive file found: $pattern"
+              exit 1
+            fi
+          done
+          echo "No sensitive files detected"
+
+  manifest-validation:
+    name: Manifest Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate manifest.json
+        run: |
+          echo "Validating manifest.json..."
+          # Check manifest.json is valid JSON
+          if ! node -e "JSON.parse(require('fs').readFileSync('manifest.json'))"; then
+            echo "ERROR: manifest.json is not valid JSON"
+            exit 1
+          fi
+
+          # Check required fields exist
+          node -e "
+            const manifest = JSON.parse(require('fs').readFileSync('manifest.json'));
+            const required = ['manifest_version', 'name', 'version', 'description'];
+            for (const field of required) {
+              if (!manifest[field]) {
+                console.error('ERROR: Missing required field:', field);
+                process.exit(1);
+              }
+            }
+            console.log('Manifest version:', manifest.manifest_version);
+            console.log('Extension name:', manifest.name);
+            console.log('Extension version:', manifest.version);
+          "
+          echo "manifest.json validation passed"

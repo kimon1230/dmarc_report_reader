@@ -7,87 +7,77 @@
 
   /**
    * Send message to service worker with retry logic.
-   * Handles MV3 service worker lifecycle where the worker may be inactive.
-   * The first attempt wakes the worker; retry ensures delivery.
+   * In MV3, chrome.runtime.sendMessage automatically wakes the service worker.
+   * This function adds retry logic with exponential backoff for reliability.
+   *
+   * Pattern based on Chrome MV3 best practices:
+   * - sendMessage wakes the worker automatically
+   * - Check chrome.runtime.lastError for errors
+   * - Retry with exponential backoff on failure
+   *
    * @param {Object} message - Message to send
    * @param {Object} options - Retry options
    * @param {number} options.maxRetries - Maximum retry attempts (default 3)
    * @param {Function} options.onRetry - Callback when retrying (receives attempt number)
    * @returns {Promise<Object>} Response from service worker
    */
-  function sendMessageWithRetry(message, options = {}) {
+  async function sendMessageWithRetry(message, options = {}) {
     const maxRetries = options.maxRetries || 3;
     const onRetry = options.onRetry || (() => {});
 
-    return new Promise((resolve, reject) => {
-      let attempts = 0;
-      let settled = false;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await new Promise((resolve, reject) => {
+          // Use longer timeout for cold-start scenarios where service worker
+          // needs to load external libraries (pako, jszip, file-handler)
+          // First attempt: 15s (cold start), subsequent: 20s (processing large files)
+          const timeoutMs = attempt === 1 ? 15000 : 20000;
+          const timeoutId = setTimeout(() => {
+            reject(new Error(`Timeout after ${timeoutMs}ms - service worker may be initializing`));
+          }, timeoutMs);
 
-      function attempt() {
-        if (settled) return;
-        attempts++;
-        let attemptHandled = false;
-        let timeoutId = null;
-
-        // First attempt: short timeout (just wake the worker)
-        // Subsequent attempts: longer timeout (let it process)
-        const timeoutMs = attempts === 1 ? 1000 : 3000;
-
-        timeoutId = setTimeout(() => {
-          if (attemptHandled || settled) return;
-          attemptHandled = true;
-
-          if (attempts < maxRetries) {
-            console.log(`DMARC Reader: Attempt ${attempts} timeout, retrying...`);
-            onRetry(attempts);
-            setTimeout(attempt, 100 * attempts); // Fast backoff: 100ms, 200ms, 300ms
-          } else {
-            settled = true;
-            reject(new Error('Service worker did not respond after retries'));
-          }
-        }, timeoutMs);
-
-        try {
           chrome.runtime.sendMessage(message, (response) => {
-            if (attemptHandled || settled) return;
-            attemptHandled = true;
             clearTimeout(timeoutId);
 
+            // Check for Chrome runtime errors (connection issues, worker terminated, etc.)
             if (chrome.runtime.lastError) {
-              const errMsg = chrome.runtime.lastError.message || 'Unknown error';
-              console.log(`DMARC Reader: sendMessage error: ${errMsg}`);
-
-              if (attempts < maxRetries) {
-                onRetry(attempts);
-                setTimeout(attempt, 100 * attempts);
-              } else {
-                settled = true;
-                reject(new Error(errMsg));
-              }
+              const errMsg = chrome.runtime.lastError.message || 'Unknown Chrome runtime error';
+              reject(new Error(errMsg));
               return;
             }
 
-            settled = true;
             resolve(response);
           });
-        } catch (err) {
-          if (attemptHandled || settled) return;
-          attemptHandled = true;
-          clearTimeout(timeoutId);
+        });
 
-          if (attempts < maxRetries) {
-            console.log(`DMARC Reader: Exception, retrying:`, err.message);
-            onRetry(attempts);
-            setTimeout(attempt, 100 * attempts);
+        return response;
+      } catch (err) {
+        const isTimeout = err.message.includes('Timeout');
+        const isConnectionError = err.message.includes('Could not establish connection') ||
+                                   err.message.includes('Receiving end does not exist');
+
+        console.log(`DMARC Reader: Attempt ${attempt}/${maxRetries} failed:`, err.message);
+
+        if (attempt < maxRetries) {
+          onRetry(attempt);
+
+          // Exponential backoff: 1s, 2s, 4s
+          // Longer delays give service worker time to fully initialize
+          const backoffMs = 1000 * Math.pow(2, attempt - 1);
+          console.log(`DMARC Reader: Waiting ${backoffMs}ms before retry...`);
+          await new Promise(r => setTimeout(r, backoffMs));
+        } else {
+          // Provide helpful error message based on error type
+          if (isConnectionError) {
+            throw new Error('Could not connect to extension. Try refreshing the page.');
+          } else if (isTimeout) {
+            throw new Error('Extension took too long to respond. Try again.');
           } else {
-            settled = true;
-            reject(err);
+            throw new Error(`Extension error: ${err.message}`);
           }
         }
       }
-
-      attempt();
-    });
+    }
   }
 
   const DMARC_PATTERNS = [

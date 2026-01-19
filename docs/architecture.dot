@@ -18,7 +18,7 @@ digraph DMARCReportReader {
 
         file_drop [label="File Drop/Pick\n(popup.js)"];
         gmail [label="Gmail\n(gmail.js)"];
-        outlook [label="Outlook Web\n(outlook.js)\n[Needs Testing]", style="filled,dashed"];
+        outlook [label="Outlook Web\n(outlook.js)\n[EXPERIMENTAL]", style="filled,dashed"];
     }
 
     subgraph cluster_processing {
@@ -31,16 +31,17 @@ digraph DMARCReportReader {
         file_handler [label="File Handler\n(file-handler.js)\nFormat Detection"];
         dmarc_parser [label="DMARC Parser\n(dmarc-parser.js)\nXML → JSON + Alignment"];
         classification [label="Classification\n(classification.js)\nSpoof vs Misconfig"];
+        errors [label="Structured Errors\n(errors.js)", fillcolor="#d4edda"];
     }
 
     subgraph cluster_libraries {
-        label="External Libraries";
+        label="External Libraries (Vendored)";
         style=filled;
         fillcolor="#fff8e1";
         node [fillcolor="#ffe082"];
 
-        jszip [label="JSZip\n(ZIP extraction)"];
-        pako [label="pako\n(GZIP decompression)"];
+        jszip [label="JSZip 3.10.1\n(ZIP extraction)\nSHA-384 verified"];
+        pako [label="pako 2.1.0\n(GZIP decompression)\nSHA-384 verified"];
     }
 
     subgraph cluster_services {
@@ -51,38 +52,64 @@ digraph DMARCReportReader {
 
         ip_lookup [label="IP Lookup\n(ip-lookup.js)"];
         ip_api [label="ip-api.com\n(External API)"];
+        session_cache [label="Session Cache\n(chrome.storage.session)"];
         provider_fingerprint [label="Provider Fingerprint\n(provider-fingerprint.js)\nESP Detection"];
     }
 
     subgraph cluster_output {
-        label="Output";
+        label="Output Layer";
         style=filled;
         fillcolor="#e8eaf6";
-        node [fillcolor="#c5cae9"];
 
-        viewer [label="Report Viewer\n(viewer.html/js/css)"];
+        subgraph cluster_viewer_modules {
+            label="Viewer Modules";
+            style=filled;
+            fillcolor="#d1c4e9";
+            node [fillcolor="#c5cae9"];
+
+            ui_utils [label="UI Utils\n(ui-utils.js)"];
+            filter_engine [label="Filter Engine\n(filter-engine.js)"];
+            diagnosis_engine [label="Diagnosis Engine\n(diagnosis-engine.js)"];
+            analysis_engine [label="Analysis Engine\n(analysis-engine.js)"];
+            export_engine [label="Export Engine\n(export-engine.js)"];
+        }
+
+        viewer [label="Report Viewer\n(viewer.html/js/css)", fillcolor="#c5cae9"];
     }
 
-    // Edges
+    // Edges - Input to Processing
     file_drop -> service_worker [label="ArrayBuffer"];
     gmail -> service_worker [label="Attachment data"];
-    outlook -> service_worker [label="Attachment data"];
+    outlook -> service_worker [label="Attachment data", style=dashed];
 
     service_worker -> file_handler [label="Raw bytes"];
+    service_worker -> errors [style=dotted, color="#666666"];
 
+    // Processing flow
     file_handler -> jszip [label="ZIP files", style=dashed];
     file_handler -> pako [label="GZ files", style=dashed];
     file_handler -> dmarc_parser [label="XML string"];
+    file_handler -> errors [style=dotted, color="#666666"];
 
     jszip -> dmarc_parser [label="Extracted XML"];
     pako -> dmarc_parser [label="Decompressed XML"];
 
     dmarc_parser -> viewer [label="Parsed report\n(JSON + Alignment)"];
+    dmarc_parser -> errors [style=dotted, color="#666666"];
 
+    // Services flow
     viewer -> ip_lookup [label="Source IPs"];
-    ip_lookup -> ip_api [label="HTTP request", style=dashed];
+    ip_lookup -> ip_api [label="HTTP batch", style=dashed];
     ip_api -> ip_lookup [label="Geo data", style=dashed];
+    ip_lookup -> session_cache [label="Cache R/W", style=dashed];
     ip_lookup -> provider_fingerprint [label="IP metadata"];
     provider_fingerprint -> classification [label="Provider info"];
     classification -> viewer [label="Enriched records\n(Provider + Class)"];
+
+    // Viewer modules (internal dependencies)
+    viewer -> ui_utils [style=dotted];
+    viewer -> filter_engine [style=dotted];
+    viewer -> diagnosis_engine [style=dotted];
+    viewer -> analysis_engine [style=dotted];
+    viewer -> export_engine [style=dotted];
 }
