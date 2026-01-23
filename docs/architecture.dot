@@ -27,7 +27,7 @@ digraph DMARCReportReader {
         fillcolor="#f0f8e8";
         node [fillcolor="#c5e1a5"];
 
-        service_worker [label="Service Worker\n(service-worker.js)"];
+        service_worker [label="Service Worker\n(service-worker.js)\n+ Keep-Alive (alarms)"];
         file_handler [label="File Handler\n(file-handler.js)\nFormat Detection"];
         dmarc_parser [label="DMARC Parser\n(dmarc-parser.js)\nXML → JSON + Alignment"];
         classification [label="Classification\n(classification.js)\nSpoof vs Misconfig"];

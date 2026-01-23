@@ -5,6 +5,19 @@ All notable changes to the DMARC Report Reader extension will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-01-22
+
+### Fixed
+- Service worker idle termination bug - extension now remains responsive after browser idle periods
+- Added `alarms` permission to keep service worker alive (4-minute keep-alive interval)
+- Content scripts now proactively ping service worker when tab regains focus
+- Popup now includes retry logic for service worker communication (was missing)
+
+### Technical
+- Added `chrome.alarms` keep-alive mechanism to prevent MV3 service worker termination
+- Added `visibilitychange` health checks in Gmail and Outlook content scripts
+- Added `sendMessageWithRetry` to popup.js for resilient messaging
+
 ## [1.0.0] - 2026-01-19
 
 ### Added

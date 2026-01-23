@@ -447,6 +447,7 @@ When receivers override DMARC policy, explains the reason:
 8. **Message Validation**: Service worker validates sender origin and message payload structure
 9. **Input Validation**: File data is validated (size limits, byte value checks) before processing
 10. **Service Worker Retry**: Content scripts handle MV3 service worker lifecycle with retry logic and visual feedback (connecting/processing/success/error states)
+11. **Service Worker Keep-Alive**: Uses `chrome.alarms` API with 4-minute interval to prevent idle termination, plus visibility-change health checks in content scripts
 
 ## Browser Compatibility
 

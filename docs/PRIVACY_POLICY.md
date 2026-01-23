@@ -50,6 +50,7 @@ The extension looks up geographic location and ISP information for IP addresses 
 | Permission | Purpose |
 |------------|---------|
 | `storage` | Session cache for IP lookups |
+| `alarms` | Keep extension responsive during idle periods (no data collection) |
 | Gmail/Outlook access | Detect DMARC attachments |
 | ip-api.com | IP geolocation (automatic for small reports, opt-in for large reports) |
 

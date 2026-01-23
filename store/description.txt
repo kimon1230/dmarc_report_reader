@@ -57,6 +57,7 @@ PRIVACY FIRST
 PERMISSIONS EXPLAINED
 
 - storage: Cache IP lookups in browser session
+- alarms: Keep extension responsive during idle (no data collection)
 - Gmail access: Detect DMARC attachments
 - Outlook access: Detect DMARC attachments (experimental)
 - ip-api.com: IP geolocation (automatic for small reports, skippable for large reports)

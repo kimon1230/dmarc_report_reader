@@ -42,7 +42,7 @@ A Chrome/Edge browser extension that reads and visualizes DMARC (Domain-based Me
 
 ### From Chrome Web Store
 
-Coming soon.
+[Install from Chrome Web Store](https://chrome.google.com/webstore/detail/dmarc-report-reader) (pending review)
 
 ## Usage
 
@@ -199,6 +199,7 @@ See [ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical documentation.
 - All user-controlled data is sanitized before display (XSS protection)
 - Service worker validates message origins and payloads
 - Manifest V3 enforces strict Content Security Policy
+- `alarms` permission used only to keep service worker responsive (no data collection)
 
 ## License
 
