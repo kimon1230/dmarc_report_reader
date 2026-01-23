@@ -42,7 +42,7 @@ A Chrome/Edge browser extension that reads and visualizes DMARC (Domain-based Me
 
 ### From Chrome Web Store
 
-[Install from Chrome Web Store](https://chrome.google.com/webstore/detail/dmarc-report-reader) (pending review)
+[Install from Chrome Web Store](https://chrome.google.com/webstore/detail/dmarc-report-reader)
 
 ## Usage
 
