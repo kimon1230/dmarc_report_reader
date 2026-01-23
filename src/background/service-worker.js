@@ -10,6 +10,46 @@ importScripts(
 );
 
 /**
+ * Keep-alive alarm configuration
+ * Prevents Chrome from terminating service worker during idle periods.
+ * Chrome MV3 terminates service workers after ~5 minutes of inactivity.
+ * We use a 4-minute alarm to stay under this threshold.
+ */
+const KEEP_ALIVE_ALARM = 'dmarc-keep-alive';
+const KEEP_ALIVE_INTERVAL_MINUTES = 4;
+
+/**
+ * Set up keep-alive alarm
+ * Creates a periodic alarm if one doesn't already exist.
+ */
+function setupKeepAlive() {
+  chrome.alarms.get(KEEP_ALIVE_ALARM, (alarm) => {
+    if (!alarm) {
+      chrome.alarms.create(KEEP_ALIVE_ALARM, {
+        periodInMinutes: KEEP_ALIVE_INTERVAL_MINUTES
+      });
+    }
+  });
+}
+
+/**
+ * Handle alarm events
+ * The alarm firing itself resets the idle timer, keeping the worker alive.
+ */
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === KEEP_ALIVE_ALARM) {
+    // Alarm firing is sufficient to keep worker alive - no action needed
+  }
+});
+
+// Initialize keep-alive on extension lifecycle events
+chrome.runtime.onInstalled.addListener(setupKeepAlive);
+chrome.runtime.onStartup.addListener(setupKeepAlive);
+
+// Also set up immediately in case worker is waking from idle
+setupKeepAlive();
+
+/**
  * Storage keys for report data
  * @constant {Object}
  */

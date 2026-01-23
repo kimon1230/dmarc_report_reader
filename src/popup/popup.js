@@ -9,6 +9,45 @@ const filePicker = document.getElementById('file-picker');
 const status = document.getElementById('status');
 
 /**
+ * Send message to service worker with retry logic
+ * Handles cases where service worker may be waking from idle state.
+ * @param {Object} message - Message to send
+ * @param {number} maxRetries - Maximum retry attempts (default 3)
+ * @returns {Promise<Object>} Response from service worker
+ */
+async function sendMessageWithRetry(message, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const timeoutMs = attempt === 1 ? 10000 : 15000;
+        const timeoutId = setTimeout(() => {
+          reject(new Error('Timeout - service worker may be initializing'));
+        }, timeoutMs);
+
+        chrome.runtime.sendMessage(message, (response) => {
+          clearTimeout(timeoutId);
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(response);
+        });
+      });
+      return response;
+    } catch (err) {
+      console.log(`DMARC Reader Popup: Attempt ${attempt}/${maxRetries} failed:`, err.message);
+
+      if (attempt < maxRetries) {
+        const backoffMs = 1000 * Math.pow(2, attempt - 1);
+        await new Promise(r => setTimeout(r, backoffMs));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+/**
  * Show status message to user
  * @param {string} message - Message to display
  * @param {string} type - Status type: 'error', 'success', or 'loading'
@@ -51,42 +90,29 @@ async function handleFile(file) {
   showStatus('Processing file...', 'loading');
 
   try {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const data = e.target.result;
+    const data = await file.arrayBuffer();
 
-      // Send to background script for processing
-      chrome.runtime.sendMessage({
-        action: 'processFile',
-        filename: file.name,
-        data: Array.from(new Uint8Array(data))
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          showStatus('Extension not ready. Please reload.', 'error');
-          return;
-        }
+    const response = await sendMessageWithRetry({
+      action: 'processFile',
+      filename: file.name,
+      data: Array.from(new Uint8Array(data))
+    });
 
-        if (response && response.success) {
-          showStatus('Opening viewer...', 'success');
-
-          // Request background to open viewer tab
-          chrome.runtime.sendMessage({ action: 'openViewer' }, () => {
-            // Close popup after opening viewer
-            window.close();
-          });
-        } else {
-          showStatus(response?.error || 'Failed to process file', 'error');
-        }
-      });
-    };
-
-    reader.onerror = () => {
-      showStatus('Failed to read file', 'error');
-    };
-
-    reader.readAsArrayBuffer(file);
+    if (response?.success) {
+      showStatus('Opening viewer...', 'success');
+      await sendMessageWithRetry({ action: 'openViewer' });
+      window.close();
+    } else {
+      showStatus(response?.error || 'Failed to process file', 'error');
+    }
   } catch (err) {
-    showStatus(`Error: ${err.message}`, 'error');
+    const isConnectionError = err.message.includes('Could not establish connection') ||
+                              err.message.includes('Receiving end does not exist');
+    if (isConnectionError) {
+      showStatus('Extension not ready. Please reload the extension.', 'error');
+    } else {
+      showStatus(`Error: ${err.message}`, 'error');
+    }
   }
 }
 

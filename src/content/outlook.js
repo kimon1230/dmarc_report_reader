@@ -305,4 +305,45 @@
     init();
   }
 
+  /**
+   * Health check on tab visibility change
+   * Proactively wakes the service worker when user returns to tab after being idle.
+   * This ensures the worker is ready before user clicks any buttons.
+   */
+  let healthCheckInProgress = false;
+
+  async function checkServiceWorkerHealth() {
+    if (healthCheckInProgress) return;
+    healthCheckInProgress = true;
+
+    try {
+      const response = await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => reject(new Error('Health check timeout')), 5000);
+
+        chrome.runtime.sendMessage({ action: 'ping' }, (response) => {
+          clearTimeout(timeoutId);
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+            return;
+          }
+          resolve(response);
+        });
+      });
+
+      if (!response?.pong) {
+        console.warn('DMARC Reader: Service worker health check failed - unexpected response');
+      }
+    } catch (err) {
+      console.warn('DMARC Reader: Service worker may need initialization. Buttons will retry automatically.');
+    } finally {
+      healthCheckInProgress = false;
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      checkServiceWorkerHealth();
+    }
+  });
+
 })();
